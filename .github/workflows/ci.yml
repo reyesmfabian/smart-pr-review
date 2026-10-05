@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm audit
+      # Auxiliary editor windows need a window manager, not only a virtual display.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openbox
+      # pretest compiles and lints.
+      - run: xvfb-run -a sh -c 'openbox & npm test'
+      - run: npm run package
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: smart-pr-review-vsix
+          path: smart-pr-review.vsix
+          if-no-files-found: error

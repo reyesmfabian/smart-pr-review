@@ -1,0 +1,40 @@
+name: Check Marketplace identity
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify_publisher:
+        description: Verify publish permissions after adding the profile to fabianreyes
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  identity:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: marketplace
+    permissions:
+      id-token: write
+    steps:
+      - uses: azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Get Marketplace profile ID (no publishing)
+        env:
+          VERIFY_PUBLISHER: ${{ inputs.verify_publisher }}
+        run: |
+          profile_id="$(az rest --method get --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id --output tsv)"
+          test -n "$profile_id"
+          printf '## Marketplace identity\n\nProfile ID: %s\n\nAdd this identity to publisher **fabianreyes** with the **Contributor** role. No extension was published.\n' "$profile_id" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$VERIFY_PUBLISHER" = true ]; then
+            role="$(az rest --method get --url 'https://marketplace.visualstudio.com/_apis/securityroles/scopes/gallery.publisher/roleassignments/resources/fabianreyes?api-version=3.2-preview.1' --resource 499b84ac-1321-427f-aa17-267ca6975798 --query "value[?identity.id=='$profile_id'].role.name" --output tsv)"
+            case "$role" in
+              Contributor|Owner|Creator) printf '\nVerified publisher role: %s\n' "$role" >> "$GITHUB_STEP_SUMMARY" ;;
+              *) echo '::error::This Marketplace identity needs the Contributor role on fabianreyes.'; exit 1 ;;
+            esac
+          fi

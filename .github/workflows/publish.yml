@@ -1,0 +1,70 @@
+name: Publish to VS Code Marketplace
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketplace-publish
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Check release version and visibility
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          node -e "const assert = require('node:assert/strict'); assert.equal(process.env.RELEASE_TAG, 'v' + require('./package.json').version, 'Release tag must match package.json'); assert.equal(process.env.REPOSITORY_PRIVATE, 'false', 'Make the repository public before publishing');"
+      - run: npm ci
+      - run: npm audit
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends openbox
+      - run: xvfb-run -a sh -c 'openbox & npm test'
+      - run: npm run package
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: marketplace-vsix
+          path: smart-pr-review.vsix
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: marketplace-vsix
+      - uses: azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Publish the verified VSIX
+        run: npx --no-install vsce publish --azure-credential --packagePath smart-pr-review.vsix
