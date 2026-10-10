@@ -186,10 +186,18 @@ suite('review window', () => {
     try {
       await ReviewWindow.show(session);
       // The window opens narrow on the page and wide on the diffs, with the diff group ready.
-      const groupsAtOpen = vscode.window.tabGroups.all.length;
-      const layout = await vscode.commands.executeCommand<{ groups: { size: number }[] }>('vscode.getEditorLayout');
+      // Native auxiliary-window focus/layout updates can arrive after the command resolves on Linux.
+      const deadline = Date.now() + 3000;
+      let layout: { groups: { size: number }[] } | undefined;
+      do {
+        layout = await vscode.commands.executeCommand<typeof layout>('vscode.getEditorLayout');
+        if (layout?.groups.length === 2) { break; }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      assert.ok(layout);
       assert.strictEqual(layout.groups.length, 2);
       assert.ok(layout.groups[0].size < layout.groups[1].size, JSON.stringify(layout));
+      const groupsAtOpen = vscode.window.tabGroups.all.length;
       const page = () => vscode.window.tabGroups.all.find(g => g.tabs.some(t => t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith('smartPrReview.review')));
       assert.ok(page(), 'the review page is open');
       const window = (ReviewWindow as unknown as { instance: { onMessage(raw: unknown): Promise<void> } }).instance;

@@ -4,6 +4,7 @@
 
 ### Fixed
 - Preserve JSON arguments when creating and removing review worktrees on Windows.
+- Preserve quotes and shell metacharacters when passing CLI arguments to Windows batch shims, including npm shims.
 - Compare registered worktree paths using native paths instead of platform-specific separators.
 - Run Linux UI interaction tests with a virtual display and retain CI test reports.
 

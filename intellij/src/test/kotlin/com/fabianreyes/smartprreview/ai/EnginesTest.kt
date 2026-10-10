@@ -89,21 +89,6 @@ class EnginesTest : BasePlatformTestCase() {
         assertNull(findExecutable("claude", mapOf("PATH" to dir.toString(), "PATHEXT" to ".CMD"), windows = true))
     }
 
-    // ---- windowsCommandLine ----
-
-    fun testQuotesWindowsCmdShimsLikeCrossSpawn() {
-        val line = windowsCommandLine("C:\\Program Files\\nodejs\\codex.cmd", listOf("exec", "-c", "approval_policy=\"never\"", "a b"), "cmd.exe")
-        assertEquals(
-            "cmd.exe" to listOf("/d", "/s", "/c", "\"C:\\Program^ Files\\nodejs\\codex.cmd ^\"exec^\" ^\"-c^\" ^\"approval_policy=\\^\"never\\^\"^\" ^\"a^ b^\"\""),
-            line,
-        )
-    }
-
-    fun testEscapesLocalNodeModulesBinShimsTwice() {
-        val (_, args) = windowsCommandLine("C:\\p\\node_modules\\.bin\\x.cmd", listOf("a b"), "cmd.exe")
-        assertEquals("\"C:\\p\\node_modules\\.bin\\x.cmd ^^^\"a^^^ b^^^\"\"", args.last())
-    }
-
     // ---- runCli ----
 
     fun testReturnsStdoutWithPromptOnStdinInTheGivenFolder() {
@@ -207,29 +192,31 @@ class EnginesTest : BasePlatformTestCase() {
     /** Like an npm shim: forwards arguments to a native executable, which parses them with Windows CRT rules. */
     fun testWindowsCmdShimInPathWithSpacesReceivesArgumentsVerbatim() {
         if (!SystemInfo.isWindows) return
-        val bin = Files.createDirectories(dir.resolve("with space").resolve("bin"))
-        val source = bin.resolve("Arguments.java")
-        Files.writeString(source, """
-            public class Arguments {
-                public static void main(String[] args) throws Exception {
-                    for (String arg : args) System.out.println("ARG:" + arg);
-                    System.in.transferTo(System.out);
+        for (folder in listOf("with space/bin", "with space/node_modules/.bin")) {
+            val bin = Files.createDirectories(dir.resolve(folder))
+            val source = bin.resolve("Arguments.java")
+            Files.writeString(source, """
+                public class Arguments {
+                    public static void main(String[] args) throws Exception {
+                        for (String arg : args) System.out.println("ARG:" + arg);
+                        System.in.transferTo(System.out);
+                    }
                 }
-            }
-        """.trimIndent())
-        // The test JVM is the IDE's JBR, which need not include a compiler; setup-java supplies this JDK.
-        val java = Path.of(requireNotNull(System.getenv("JAVA_HOME")), "bin", "java.exe")
-        Files.writeString(
-            bin.resolve("fake-engine.cmd"),
-            "@echo off\r\n\"$java\" \"%~dp0Arguments.java\" %*\r\n",
-        )
-        val env = mapOf("PATH" to bin.toString(), "PATHEXT" to ".COM;.EXE;.BAT;.CMD")
-        val path = findExecutable("fake-engine", env, windows = true)!!.toString()
-        val args = listOf("plain", "with space", "quote\"inside", "a&b|c^d")
-        val out = runCli(Engine("fake", path, args), "the prompt", dir, null, 30_000)
-        val lines = out.lines().map { it.trimEnd() }
-        for (a in args) assertTrue("missing ARG:$a in:\n$out", "ARG:$a" in lines)
-        assertTrue(out, out.contains("the prompt"))
+            """.trimIndent())
+            // The test JVM is the IDE's JBR, which need not include a compiler; setup-java supplies this JDK.
+            val java = Path.of(requireNotNull(System.getenv("JAVA_HOME")), "bin", "java.exe")
+            Files.writeString(
+                bin.resolve("fake-engine.cmd"),
+                "@echo off\r\n\"$java\" \"%~dp0Arguments.java\" %*\r\n",
+            )
+            val env = mapOf("PATH" to bin.toString(), "PATHEXT" to ".COM;.EXE;.BAT;.CMD")
+            val path = findExecutable("fake-engine", env, windows = true)!!.toString()
+            val args = listOf("plain", "with space", "quote\"inside", "a&b|c^d")
+            val out = runCli(Engine("fake", path, args), "the prompt", dir, null, 30_000)
+            val lines = out.lines().map { it.trimEnd() }
+            for (a in args) assertTrue("missing ARG:$a in:\n$out", "ARG:$a" in lines)
+            assertTrue(out, out.contains("the prompt"))
+        }
     }
 
     private fun failureOf(block: () -> Unit): EngineException {

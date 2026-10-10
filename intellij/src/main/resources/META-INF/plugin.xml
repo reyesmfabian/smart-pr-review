@@ -18,7 +18,7 @@
     Review worktrees are only removed after checking for local files and additional commit history.</p>
   ]]></description>
   <change-notes><![CDATA[
-    <p>0.1.1: Fixed Windows review worktree creation and cleanup by preserving JSON arguments and normalizing native paths.</p>
+    <p>0.1.1: Fixed Windows review worktree creation and cleanup by preserving JSON arguments and normalizing native paths. Fixed Windows CLI shim argument escaping.</p>
     <p>Initial release for the IntelliJ Platform.</p>
     <ul>
       <li>GitHub and Azure DevOps pull request review with conversations, drafts, suggestions, viewed files and publishing.</li>

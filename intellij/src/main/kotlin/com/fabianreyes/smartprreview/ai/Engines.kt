@@ -1,6 +1,7 @@
 package com.fabianreyes.smartprreview.ai
 
 import com.fabianreyes.smartprreview.SmartPrReviewBundle
+import com.intellij.execution.CommandLineUtil
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.util.EnvironmentUtil
@@ -53,26 +54,6 @@ fun findExecutable(command: String, env: Map<String, String> = EnvironmentUtil.g
     return null
 }
 
-/** cmd.exe metacharacters, escaped with ^ (cross-spawn's set). */
-private val CMD_META = Regex("([()\\]\\[%!^\"`<>&|;, *?])")
-private val NODE_BIN_SHIM = Regex("node_modules[\\\\/]\\.bin[\\\\/][^\\\\/]+\\.cmd$", RegexOption.IGNORE_CASE)
-
-private fun caret(s: String) = CMD_META.replace(s, "^$1")
-
-/** cross-spawn's command line for a Windows .cmd/.bat file: MSVCRT quoting plus cmd.exe escaping. */
-fun windowsCommandLine(executable: String, args: List<String>, shell: String = System.getenv("comspec") ?: "cmd.exe"): Pair<String, List<String>> {
-    // npm's local node_modules/.bin shims parse their arguments twice.
-    val twice = NODE_BIN_SHIM.containsMatchIn(executable)
-    val quoted = args.map { arg ->
-        var escaped = Regex("(\\\\*)\"").replace(arg) { m -> m.groupValues[1] + m.groupValues[1] + "\\\"" }
-        escaped = Regex("(\\\\*)$").replace(escaped) { m -> m.groupValues[1] + m.groupValues[1] }
-        escaped = caret("\"$escaped\"")
-        if (twice) caret(escaped) else escaped
-    }
-    val line = (listOf(caret(executable)) + quoted).joinToString(" ")
-    return shell to listOf("/d", "/s", "/c", "\"$line\"")
-}
-
 /** Engines answer a few kilobytes; anything far larger is a runaway process. */
 private const val MAX_OUTPUT_MB = 5
 private const val MAX_OUTPUT_BYTES = MAX_OUTPUT_MB * 1024 * 1024
@@ -86,8 +67,8 @@ private fun killTree(process: Process): List<ProcessHandle> {
 }
 
 /**
- * Runs the engine in `cwd`, never through a shell (the prompt holds pull request content), except Windows
- * .cmd/.bat shims, which need cmd.exe. Writes the prompt to stdin and closes it, returns stdout. Timeout
+ * Runs the engine in `cwd`, using platform quoting (Windows .cmd/.bat shims require a shell).
+ * The pull request prompt is sent only on stdin, never included in the command line. Writes the prompt to stdin and closes it, returns stdout. Timeout
  * and cancellation stop the whole process tree (SIGTERM, SIGKILL after 3 s), and the call returns only
  * once the engine has exited, so the worktree is never removed under a running engine.
  */
@@ -96,8 +77,8 @@ fun runCli(
     /** The shell's environment (a GUI-launched IDE has launchd's minimal PATH, and `#!/usr/bin/env node` CLIs need the real one). */
     env: Map<String, String> = EnvironmentUtil.getEnvironmentMap(),
 ): String {
-    val shim = SystemInfo.isWindows && Regex("\\.(cmd|bat)$", RegexOption.IGNORE_CASE).containsMatchIn(engine.executable)
-    val command = if (shim) windowsCommandLine(engine.executable, engine.args).let { listOf(it.first) + it.second } else listOf(engine.executable) + engine.args
+    // IntelliJ handles Windows shell shims, native quoting and metacharacters together.
+    val command = CommandLineUtil.toCommandLine(engine.executable, engine.args)
     val builder = ProcessBuilder(command).directory(cwd.toFile()).redirectErrorStream(false)
     builder.environment().apply { clear(); putAll(env) }
     val process = builder.start()
