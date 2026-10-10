@@ -1,5 +1,12 @@
 # Changelog — IntelliJ Platform
 
+## 0.1.1 — 2026-10-10
+
+### Fixed
+- Preserve JSON arguments when creating and removing review worktrees on Windows.
+- Compare registered worktree paths using native paths instead of platform-specific separators.
+- Run Linux UI interaction tests with a virtual display and retain CI test reports.
+
 ## 0.1.0 — 2026-10-10
 
 Initial IntelliJ Platform release for IntelliJ IDEA and Android Studio.

@@ -1,5 +1,6 @@
 package com.fabianreyes.smartprreview.git
 
+import com.intellij.execution.CommandLineUtil
 import java.io.IOException
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
@@ -12,7 +13,9 @@ class GitException(message: String) : RuntimeException(message)
 class Git(val root: Path) {
     /** Runs `git args` in [root]; stdout on success, GitException with stderr otherwise. */
     fun run(vararg args: String, env: Map<String, String> = emptyMap()): String {
-        val process = ProcessBuilder(listOf("git") + args).directory(root.toFile()).apply { environment().putAll(env) }.start()
+        // IntelliJ preserves embedded quotes on Windows (JSON records, paths with spaces).
+        val command = CommandLineUtil.toCommandLine("git", args.toList())
+        val process = ProcessBuilder(command).directory(root.toFile()).apply { environment().putAll(env) }.start()
         process.outputStream.close()
         // Read both streams at once: a full stderr pipe would block git.
         val stderr = CompletableFuture.supplyAsync { process.errorStream.readBytes().toString(Charsets.UTF_8) }

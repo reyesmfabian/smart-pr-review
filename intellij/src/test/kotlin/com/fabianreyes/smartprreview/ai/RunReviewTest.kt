@@ -13,6 +13,7 @@ import com.fabianreyes.smartprreview.review.ReviewSession
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.util.io.FileUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -116,7 +117,8 @@ class RunReviewTest : BasePlatformTestCase() {
     override fun tearDown() {
         try {
             session.dispose()
-            deleteWithoutFollowing(dir)
+            // The fixture contains Git objects with Windows' read-only attribute, unlike an AI worktree.
+            assertTrue(FileUtil.delete(dir.toFile()))
         } finally {
             super.tearDown()
         }

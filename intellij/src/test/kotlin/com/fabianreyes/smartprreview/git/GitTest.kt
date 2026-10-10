@@ -63,6 +63,14 @@ class GitTest {
     }
 
     @Test
+    fun `arguments preserve JSON quotes spaces metacharacters and backslashes`() {
+        val record = """{"path":"C:\\repo with spaces\\review","message":"a&b|c^d","prId":7}"""
+        git.run("config", "--local", "--add", "smart-pr-review.worktree", record)
+        assertEquals(record, git.run("config", "--local", "--get", "smart-pr-review.worktree").trim())
+        git.run("config", "--local", "--fixed-value", "--unset-all", "smart-pr-review.worktree", record)
+    }
+
+    @Test
     fun `picks upstream over origin and reads changed files, ranges and contents`() {
         assertNull(git.pickRemote())
         git.run("remote", "add", "origin", "https://github.com/o/r.git")

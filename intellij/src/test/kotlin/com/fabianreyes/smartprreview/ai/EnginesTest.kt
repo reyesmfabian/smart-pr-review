@@ -8,6 +8,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.concurrent.thread
+import javax.tools.ToolProvider
 
 class EnginesTest : BasePlatformTestCase() {
     private lateinit var dir: Path
@@ -204,20 +205,24 @@ class EnginesTest : BasePlatformTestCase() {
         assertEquals("ok", runCli(sh("printf ok"), "x".repeat(2_000_000), dir, null, 10_000))
     }
 
-    /**
-     * Windows only (CI): the pre-quoted cmd.exe command line from windowsCommandLine reaches a `.cmd` shim in a path with
-     * spaces intact. The script copies each argument with `set "A=%~1"` (quotes make & | ^ literal; `set` takes up to the
-     * last quote, so an inner `"` survives) and prints it with delayed expansion, so cmd does not re-parse it.
-     */
+    /** Like an npm shim: forwards arguments to a native executable, which parses them with Windows CRT rules. */
     fun testWindowsCmdShimInPathWithSpacesReceivesArgumentsVerbatim() {
         if (!SystemInfo.isWindows) return
         val bin = Files.createDirectories(dir.resolve("with space").resolve("bin"))
+        val source = bin.resolve("Arguments.java")
+        Files.writeString(source, """
+            public class Arguments {
+                public static void main(String[] args) throws Exception {
+                    for (String arg : args) System.out.println("ARG:" + arg);
+                    System.in.transferTo(System.out);
+                }
+            }
+        """.trimIndent())
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, source.toString()))
+        val java = Path.of(System.getProperty("java.home"), "bin", "java.exe")
         Files.writeString(
             bin.resolve("fake-engine.cmd"),
-            listOf(
-                "@echo off", "setlocal enabledelayedexpansion", ":loop", "if \"%~1\"==\"\" goto done",
-                "set \"A=%~1\"", "echo ARG:!A!", "shift", "goto loop", ":done", "more",
-            ).joinToString("\r\n"),
+            "@echo off\r\n\"$java\" -cp \"%~dp0.\" Arguments %*\r\n",
         )
         val env = mapOf("PATH" to bin.toString(), "PATHEXT" to ".COM;.EXE;.BAT;.CMD")
         val path = findExecutable("fake-engine", env, windows = true)!!.toString()

@@ -46,8 +46,8 @@ fun createReviewWorktree(git: Git, prId: Int, headSha: String): ReviewWorktree {
 
 fun checkReviewWorktree(git: Git, worktree: ReviewWorktree) {
     val paths = git.run("worktree", "list", "--porcelain", "-z").split('\u0000')
-        .filter { it.startsWith("worktree ") }.map { it.removePrefix("worktree ") }
-    check(worktree in reviewWorktrees(git) && worktree.path.toRealPath().toString() in paths) { message("worktree.unregistered") }
+        .filter { it.startsWith("worktree ") }.map { Path.of(it.removePrefix("worktree ")) }
+    check(worktree in reviewWorktrees(git) && worktree.path.toRealPath() in paths) { message("worktree.unregistered") }
 }
 
 fun removeReviewWorktree(git: Git, worktree: ReviewWorktree) {
