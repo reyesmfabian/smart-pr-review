@@ -8,7 +8,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.concurrent.thread
-import javax.tools.ToolProvider
 
 class EnginesTest : BasePlatformTestCase() {
     private lateinit var dir: Path
@@ -218,11 +217,11 @@ class EnginesTest : BasePlatformTestCase() {
                 }
             }
         """.trimIndent())
-        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, source.toString()))
-        val java = Path.of(System.getProperty("java.home"), "bin", "java.exe")
+        // The test JVM is the IDE's JBR, which need not include a compiler; setup-java supplies this JDK.
+        val java = Path.of(requireNotNull(System.getenv("JAVA_HOME")), "bin", "java.exe")
         Files.writeString(
             bin.resolve("fake-engine.cmd"),
-            "@echo off\r\n\"$java\" -cp \"%~dp0.\" Arguments %*\r\n",
+            "@echo off\r\n\"$java\" \"%~dp0Arguments.java\" %*\r\n",
         )
         val env = mapOf("PATH" to bin.toString(), "PATHEXT" to ".COM;.EXE;.BAT;.CMD")
         val path = findExecutable("fake-engine", env, windows = true)!!.toString()
