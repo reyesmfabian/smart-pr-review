@@ -46,7 +46,10 @@ suite("manifest", () => {
     const intellij = workflow.jobs.intellij;
     assert.strictEqual(intellij.defaults.run["working-directory"], "intellij");
     assert.deepStrictEqual(intellij.strategy.matrix.os, ["ubuntu-latest", "windows-latest"]);
-    assert.ok(intellij.steps.some((step: { run?: string }) => step.run === "./gradlew test buildPlugin"));
+    const linux = intellij.steps.find((step: { run?: string }) => step.run === "xvfb-run -a ./gradlew test buildPlugin");
+    assert.strictEqual(linux.if, "runner.os == 'Linux'");
+    const desktop = intellij.steps.find((step: { run?: string }) => step.run === "./gradlew test buildPlugin");
+    assert.strictEqual(desktop.if, "runner.os != 'Linux'");
     assert.strictEqual(intellij.steps.at(-1).with.path, "intellij/build/distributions/*.zip");
     assert.ok(intellij.steps.at(-1).with.name.includes("${{ matrix.os }}"));
   });

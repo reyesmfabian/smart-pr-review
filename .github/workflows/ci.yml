@@ -52,8 +52,21 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6.4.0
-      - run: ./gradlew test buildPlugin
+      - name: Install virtual display for UI interaction tests
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+      - run: xvfb-run -a ./gradlew test buildPlugin
+        if: runner.os == 'Linux'
         shell: bash
+      - run: ./gradlew test buildPlugin
+        if: runner.os != 'Linux'
+        shell: bash
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: intellij-test-reports-${{ matrix.os }}
+          path: intellij/build/reports/tests/test/
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: smart-pr-review-intellij-${{ matrix.os }}
