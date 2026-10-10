@@ -1,0 +1,85 @@
+<idea-plugin>
+  <id>com.fabianreyes.smartprreview</id>
+  <name>Smart PR Review</name>
+  <vendor url="https://github.com/reyesmfabian" email="fabrey.bco@gmail.com">Fabian Reyes</vendor>
+  <description><![CDATA[
+    <p>Review GitHub and Azure DevOps pull requests in IntelliJ IDEA and Android Studio.</p>
+    <ul>
+      <li>Browse and search pull requests, then review native side-by-side diffs with clear additions, deletions and renames.</li>
+      <li>Read conversations, reply, resolve threads, and mark files as viewed.</li>
+      <li>Write draft comments and code suggestions; preview the complete review before publishing.</li>
+      <li>Use a dedicated review window, check out the pull request branch, or create a separate review worktree.</li>
+      <li>Run AI reviews with Claude Code, Codex, Cursor or a configured CLI and Markdown review profiles. AI findings remain unpublished drafts.</li>
+    </ul>
+    <p>Supports GitHub, Azure DevOps Services and Azure DevOps Server, with English and Spanish UI.
+    Git and a local repository are required. AI features require a separately installed and authenticated CLI.</p>
+    <p>Draft comments and AI findings are not published until you choose Publish now. Replies and thread actions are sent when you confirm them.
+    Tokens are stored with the IDE's credential storage.
+    Review worktrees are only removed after checking for local files and additional commit history.</p>
+  ]]></description>
+  <change-notes><![CDATA[
+    <p>Initial release for the IntelliJ Platform.</p>
+    <ul>
+      <li>GitHub and Azure DevOps pull request review with conversations, drafts, suggestions, viewed files and publishing.</li>
+      <li>Dedicated review window with native two-column diffs and explicit checkout controls.</li>
+      <li>AI review profiles and configurable CLI engines.</li>
+      <li>Create, open and safely remove persistent review worktrees.</li>
+      <li>English and Spanish interface.</li>
+    </ul>
+  ]]></change-notes>
+
+  <depends>com.intellij.modules.platform</depends>
+  <depends optional="true" config-file="smartPrReview-github.xml">org.jetbrains.plugins.github</depends>
+
+  <extensionPoints>
+    <extensionPoint qualifiedName="com.fabianreyes.smartprreview.githubTokenSource"
+                    interface="com.fabianreyes.smartprreview.auth.GitHubTokenSource" dynamic="true"/>
+  </extensionPoints>
+
+  <resource-bundle>messages.SmartPrReviewBundle</resource-bundle>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <projectConfigurable parentId="tools" id="com.fabianreyes.smartprreview.settings"
+                         instance="com.fabianreyes.smartprreview.settings.SmartPrReviewConfigurable"
+                         bundle="messages.SmartPrReviewBundle" key="settings.displayName" nonDefaultProject="true"/>
+    <diff.DiffExtension implementation="com.fabianreyes.smartprreview.ui.diff.ReviewDiffExtension"/>
+    <notificationGroup id="Smart PR Review" displayType="BALLOON" bundle="messages.SmartPrReviewBundle" key="plugin.name"/>
+    <toolWindow id="Smart PR Review" anchor="left" icon="AllIcons.Vcs.Branch"
+                factoryClass="com.fabianreyes.smartprreview.ui.SmartPrReviewToolWindowFactory"/>
+  </extensions>
+
+  <actions>
+    <action id="SmartPrReview.Refresh" class="com.fabianreyes.smartprreview.ui.actions.RefreshAction"/>
+    <action id="SmartPrReview.Search" class="com.fabianreyes.smartprreview.ui.actions.SearchPullRequestsAction"/>
+    <action id="SmartPrReview.OpenInBrowser" class="com.fabianreyes.smartprreview.ui.actions.OpenInBrowserAction"/>
+    <action id="SmartPrReview.OpenReviewWindow" class="com.fabianreyes.smartprreview.ui.actions.OpenReviewWindowAction"/>
+    <action id="SmartPrReview.CreateWorktree" class="com.fabianreyes.smartprreview.ui.actions.CreateWorktreeAction"/>
+    <action id="SmartPrReview.ManageWorktrees" class="com.fabianreyes.smartprreview.ui.actions.ManageWorktreesAction"/>
+    <action id="SmartPrReview.Checkout" class="com.fabianreyes.smartprreview.ui.actions.CheckoutAction"/>
+    <action id="SmartPrReview.PrepareReview" class="com.fabianreyes.smartprreview.ui.actions.PrepareReviewAction"/>
+    <action id="SmartPrReview.ReviewWithAi" class="com.fabianreyes.smartprreview.ai.AiReviewAction"/>
+    <action id="SmartPrReview.CreateProfile" class="com.fabianreyes.smartprreview.ai.CreateProfileAction"/>
+    <action id="SmartPrReview.ExitReview" class="com.fabianreyes.smartprreview.ui.actions.ExitReviewAction"/>
+    <action id="SmartPrReview.DiscardDrafts" class="com.fabianreyes.smartprreview.ui.actions.DiscardDraftsAction"/>
+    <action id="SmartPrReview.AddDraft" class="com.fabianreyes.smartprreview.ui.diff.AddDraftAction">
+      <add-to-group group-id="Diff.EditorPopupMenu"/>
+    </action>
+    <action id="SmartPrReview.AddSuggestion" class="com.fabianreyes.smartprreview.ui.diff.AddSuggestionAction">
+      <add-to-group group-id="Diff.EditorPopupMenu"/>
+    </action>
+    <group id="SmartPrReview.ToolWindow">
+      <reference ref="SmartPrReview.Refresh"/>
+      <reference ref="SmartPrReview.Search"/>
+      <reference ref="SmartPrReview.OpenInBrowser"/>
+      <reference ref="SmartPrReview.Checkout"/>
+      <reference ref="SmartPrReview.CreateWorktree"/>
+      <reference ref="SmartPrReview.ManageWorktrees"/>
+      <reference ref="SmartPrReview.OpenReviewWindow"/>
+      <reference ref="SmartPrReview.PrepareReview"/>
+      <reference ref="SmartPrReview.ReviewWithAi"/>
+      <reference ref="SmartPrReview.CreateProfile"/>
+      <reference ref="SmartPrReview.ExitReview"/>
+      <reference ref="SmartPrReview.DiscardDrafts"/>
+    </group>
+  </actions>
+</idea-plugin>

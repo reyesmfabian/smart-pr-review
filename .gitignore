@@ -3,3 +3,7 @@ node_modules
 .vscode-test/
 *.vsix
 .DS_Store
+.claude/worktrees/
+/.github/RELEASING.md
+/docs/
+/release-assets/

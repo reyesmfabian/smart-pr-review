@@ -1,0 +1,5 @@
+<idea-plugin>
+  <extensions defaultExtensionNs="com.fabianreyes.smartprreview">
+    <githubTokenSource implementation="com.fabianreyes.smartprreview.auth.github.GitHubPluginTokenSource"/>
+  </extensions>
+</idea-plugin>

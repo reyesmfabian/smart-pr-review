@@ -1,0 +1,21 @@
+.vscode/**
+.vscode-test/**
+src/**
+scripts/**
+out/test/**
+**/*.map
+**/*.ts
+.gitignore
+.nvmrc
+tsconfig.json
+eslint.config.mjs
+.vscode-test.mjs
+**/.DS_Store
+images/*.svg
+# Dependency code the extension never loads: VS Code requires its CommonJS build on Node.
+node_modules/*/dist/esm/**
+node_modules/yaml/browser/**
+node_modules/yaml/bin.mjs
+node_modules/yaml/util.js
+node_modules/yaml/dist/cli.*
+node_modules/**/README.md

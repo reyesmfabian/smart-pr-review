@@ -12,12 +12,16 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: vscode
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0
         with:
-          node-version-file: .nvmrc
+          node-version-file: vscode/.nvmrc
           cache: npm
+          cache-dependency-path: vscode/package-lock.json
       - run: npm ci
       - run: npm audit
       # Auxiliary editor windows need a window manager, not only a virtual display.
@@ -28,5 +32,30 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: smart-pr-review-vsix
-          path: smart-pr-review.vsix
+          path: vscode/smart-pr-review.vsix
+          if-no-files-found: error
+
+  intellij:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: intellij
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6.4.0
+      - run: ./gradlew test buildPlugin
+        shell: bash
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: smart-pr-review-intellij-${{ matrix.os }}
+          path: intellij/build/distributions/*.zip
           if-no-files-found: error

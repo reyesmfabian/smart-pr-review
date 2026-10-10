@@ -1,0 +1,629 @@
+{
+  "name": "smart-pr-review",
+  "displayName": "%displayName%",
+  "description": "%description%",
+  "version": "0.1.0",
+  "publisher": "fabianreyes",
+  "icon": "images/icon.png",
+  "license": "MIT",
+  "repository": "https://github.com/reyesmfabian/smart-pr-review",
+  "homepage": "https://github.com/reyesmfabian/smart-pr-review/tree/main/vscode#readme",
+  "bugs": {
+    "url": "https://github.com/reyesmfabian/smart-pr-review/issues"
+  },
+  "keywords": [
+    "pull request",
+    "code review",
+    "github",
+    "azure devops",
+    "ai review"
+  ],
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "l10n": "./l10n",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "title": "Smart PR Review",
+      "properties": {
+        "smartPrReview.azureDevOps.hosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "%config.azureDevOpsHosts%"
+        },
+        "smartPrReview.allowApproval": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "markdownDescription": "%config.allowApproval%"
+        },
+        "smartPrReview.defaultEngine": {
+          "type": "string",
+          "default": "copilot",
+          "markdownDescription": "%config.defaultEngine%"
+        },
+        "smartPrReview.engines": {
+          "type": "object",
+          "scope": "machine",
+          "default": {
+            "claude": {
+              "command": "claude",
+              "args": [
+                "-p",
+                "--restricted",
+                "--strict-mcp-config",
+                "--tools",
+                "Read",
+                "Grep",
+                "Glob",
+                "--permission-mode",
+                "dontAsk",
+                "--no-session-persistence",
+                "--output-format",
+                "text"
+              ]
+            },
+            "codex": {
+              "command": "codex",
+              "args": [
+                "exec",
+                "--sandbox",
+                "read-only",
+                "-c",
+                "approval_policy=\"never\"",
+                "--skip-git-repo-check",
+                "--ephemeral",
+                "--color",
+                "never",
+                "-"
+              ]
+            },
+            "cursor": {
+              "command": "cursor-agent",
+              "args": [
+                "-p",
+                "--mode",
+                "ask",
+                "--sandbox",
+                "enabled",
+                "--trust",
+                "--model",
+                "auto",
+                "--output-format",
+                "text"
+              ]
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "command"
+            ]
+          },
+          "markdownDescription": "%config.engines%"
+        },
+        "smartPrReview.profilesPath": {
+          "type": "string",
+          "default": ".smart-review/profiles",
+          "scope": "resource",
+          "markdownDescription": "%config.profilesPath%"
+        },
+        "smartPrReview.ai.language": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.aiLanguage%"
+        },
+        "smartPrReview.ai.timeoutMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 1440,
+          "markdownDescription": "%config.aiTimeoutMinutes%"
+        },
+        "smartPrReview.ai.labelComments": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "%config.aiLabelComments%"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "smartPrReview",
+          "title": "%viewContainer.title%",
+          "icon": "resources/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "smartPrReview": [
+        {
+          "id": "smartPrReview.pullRequests",
+          "name": "%view.pullRequests%"
+        },
+        {
+          "id": "smartPrReview.currentPullRequest",
+          "name": "%view.currentPullRequest%"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "smartPrReview.currentPullRequest",
+        "contents": "%welcome.noPullRequest%",
+        "when": "smartPrReview.state == ready && !smartPrReview.hasPullRequest"
+      },
+      {
+        "view": "smartPrReview.pullRequests",
+        "contents": "%welcome.signedOut%",
+        "when": "smartPrReview.state == signedOut && smartPrReview.provider == github"
+      },
+      {
+        "view": "smartPrReview.pullRequests",
+        "contents": "%welcome.signedOutAzureDevOps%",
+        "when": "smartPrReview.state == signedOut && smartPrReview.provider == azureDevOps"
+      },
+      {
+        "view": "smartPrReview.pullRequests",
+        "contents": "%welcome.signedOutAzureDevOpsServer%",
+        "when": "smartPrReview.state == signedOut && smartPrReview.provider == azureDevOpsServer"
+      },
+      {
+        "view": "smartPrReview.pullRequests",
+        "contents": "%welcome.noRepository%",
+        "when": "smartPrReview.state == noRepository"
+      },
+      {
+        "view": "smartPrReview.pullRequests",
+        "contents": "%welcome.unsupported%",
+        "when": "smartPrReview.state == unsupported"
+      }
+    ],
+    "commands": [
+      {
+        "command": "smartPrReview.signIn",
+        "title": "%command.signIn%",
+        "category": "Smart PR Review"
+      },
+      {
+        "command": "smartPrReview.setAzureDevOpsPat",
+        "title": "%command.setAzureDevOpsPat%",
+        "category": "Smart PR Review"
+      },
+      {
+        "command": "smartPrReview.refresh",
+        "title": "%command.refresh%",
+        "category": "Smart PR Review",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "smartPrReview.searchPullRequests",
+        "title": "%command.searchPullRequests%",
+        "category": "Smart PR Review",
+        "icon": "$(search)"
+      },
+      {
+        "command": "smartPrReview.openPullRequest",
+        "title": "%command.openPullRequest%",
+        "category": "Smart PR Review"
+      },
+      {
+        "command": "smartPrReview.openFileDiff",
+        "title": "%command.openFileDiff%",
+        "category": "Smart PR Review"
+      },
+      {
+        "command": "smartPrReview.openThread",
+        "title": "%command.openThread%",
+        "category": "Smart PR Review"
+      },
+      {
+        "command": "smartPrReview.checkoutPullRequest",
+        "title": "%command.checkoutPullRequest%",
+        "category": "Smart PR Review",
+        "icon": "$(git-branch)",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "smartPrReview.openPublishPanel",
+        "title": "%command.openPublishPanel%",
+        "category": "Smart PR Review",
+        "icon": "$(send)"
+      },
+      {
+        "command": "smartPrReview.openReviewWindow",
+        "title": "%command.openReviewWindow%",
+        "category": "Smart PR Review",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "smartPrReview.discardDrafts",
+        "title": "%command.discardDrafts%",
+        "category": "Smart PR Review",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "smartPrReview.addSuggestion",
+        "title": "%command.addSuggestion%",
+        "category": "Smart PR Review"
+      },
+      {
+        "command": "smartPrReview.reviewWithAI",
+        "title": "%command.reviewWithAI%",
+        "category": "Smart PR Review",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "smartPrReview.createProfile",
+        "title": "%command.createProfile%",
+        "category": "Smart PR Review"
+      },
+      {
+        "command": "smartPrReview.createDraft",
+        "title": "%command.createDraft%"
+      },
+      {
+        "command": "smartPrReview.createSuggestion",
+        "title": "%command.createSuggestion%"
+      },
+      {
+        "command": "smartPrReview.openInBrowser",
+        "title": "%command.openInBrowser%",
+        "category": "Smart PR Review",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "smartPrReview.exitReview",
+        "title": "%command.exitReview%",
+        "category": "Smart PR Review",
+        "icon": "$(close)"
+      },
+      {
+        "command": "smartPrReview.replyThread",
+        "title": "%command.replyThread%"
+      },
+      {
+        "command": "smartPrReview.resolveThread",
+        "title": "%command.resolveThread%",
+        "icon": "$(check)"
+      },
+      {
+        "command": "smartPrReview.reopenThread",
+        "title": "%command.reopenThread%",
+        "icon": "$(issue-reopened)"
+      },
+      {
+        "command": "smartPrReview.editDraft",
+        "title": "%command.editDraft%",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "smartPrReview.saveDraft",
+        "title": "%command.saveDraft%"
+      },
+      {
+        "command": "smartPrReview.cancelEditDraft",
+        "title": "%command.cancelEditDraft%"
+      },
+      {
+        "command": "smartPrReview.deleteDraft",
+        "title": "%command.deleteDraft%",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "smartPrReview.createWorktree",
+        "title": "%command.createWorktree%",
+        "category": "Smart PR Review",
+        "icon": "$(new-folder)",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "smartPrReview.manageWorktrees",
+        "title": "%command.manageWorktrees%",
+        "category": "Smart PR Review",
+        "icon": "$(list-tree)",
+        "enablement": "isWorkspaceTrusted"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "smartPrReview.refresh",
+          "when": "view == smartPrReview.pullRequests && smartPrReview.state == ready",
+          "group": "navigation@1"
+        },
+        {
+          "command": "smartPrReview.searchPullRequests",
+          "when": "view == smartPrReview.pullRequests && smartPrReview.state == ready",
+          "group": "navigation@0"
+        },
+        {
+          "command": "smartPrReview.reviewWithAI",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "navigation@0"
+        },
+        {
+          "command": "smartPrReview.checkoutPullRequest",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest && !smartPrReview.checkedOut",
+          "group": "navigation@1"
+        },
+        {
+          "command": "smartPrReview.openPublishPanel",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "navigation@2"
+        },
+        {
+          "command": "smartPrReview.discardDrafts",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "navigation@3"
+        },
+        {
+          "command": "smartPrReview.openInBrowser",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "navigation@4"
+        },
+        {
+          "command": "smartPrReview.openReviewWindow",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "navigation@5"
+        },
+        {
+          "command": "smartPrReview.exitReview",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "navigation@9"
+        },
+        {
+          "command": "smartPrReview.createWorktree",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "navigation@6"
+        },
+        {
+          "command": "smartPrReview.manageWorktrees",
+          "when": "view == smartPrReview.currentPullRequest && smartPrReview.hasPullRequest",
+          "group": "worktrees@1"
+        },
+        {
+          "command": "smartPrReview.manageWorktrees",
+          "when": "view == smartPrReview.pullRequests && smartPrReview.state == ready",
+          "group": "worktrees@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "smartPrReview.openInBrowser",
+          "when": "view == smartPrReview.pullRequests && viewItem == pullRequest",
+          "group": "inline"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "smartPrReview.addSuggestion",
+          "when": "smartPrReview.hasPullRequest",
+          "group": "smartPrReview@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "smartPrReview.signIn",
+          "when": "smartPrReview.state == signedOut || smartPrReview.state == ready"
+        },
+        {
+          "command": "smartPrReview.setAzureDevOpsPat",
+          "when": "smartPrReview.provider == azureDevOps || smartPrReview.provider == azureDevOpsServer"
+        },
+        {
+          "command": "smartPrReview.refresh",
+          "when": "smartPrReview.state == ready"
+        },
+        {
+          "command": "smartPrReview.searchPullRequests",
+          "when": "smartPrReview.state == ready"
+        },
+        {
+          "command": "smartPrReview.openPullRequest",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.openFileDiff",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.openThread",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.checkoutPullRequest",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.openPublishPanel",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.openReviewWindow",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.discardDrafts",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.addSuggestion",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.reviewWithAI",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.createProfile",
+          "when": "smartPrReview.state == ready || smartPrReview.state == signedOut"
+        },
+        {
+          "command": "smartPrReview.createDraft",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.createSuggestion",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.openInBrowser",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.exitReview",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.replyThread",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.resolveThread",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.reopenThread",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.editDraft",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.saveDraft",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.cancelEditDraft",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.deleteDraft",
+          "when": "false"
+        },
+        {
+          "command": "smartPrReview.createWorktree",
+          "when": "smartPrReview.hasPullRequest"
+        },
+        {
+          "command": "smartPrReview.manageWorktrees",
+          "when": "smartPrReview.state == ready"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "smartPrReview.createDraft",
+          "group": "inline@1",
+          "when": "commentController == smartPrReview && commentThreadIsEmpty"
+        },
+        {
+          "command": "smartPrReview.createSuggestion",
+          "group": "inline@2",
+          "when": "commentController == smartPrReview && commentThreadIsEmpty"
+        },
+        {
+          "command": "smartPrReview.replyThread",
+          "group": "inline",
+          "when": "commentController == smartPrReview && commentThread =~ /^existing/"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "smartPrReview.resolveThread",
+          "group": "inline",
+          "when": "commentController == smartPrReview && commentThread == existing-unresolved"
+        },
+        {
+          "command": "smartPrReview.reopenThread",
+          "group": "inline",
+          "when": "commentController == smartPrReview && commentThread == existing-resolved"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "smartPrReview.editDraft",
+          "group": "inline",
+          "when": "commentController == smartPrReview && comment == draft"
+        },
+        {
+          "command": "smartPrReview.deleteDraft",
+          "group": "inline",
+          "when": "commentController == smartPrReview && comment == draft"
+        }
+      ],
+      "comments/comment/context": [
+        {
+          "command": "smartPrReview.saveDraft",
+          "group": "inline@1",
+          "when": "commentController == smartPrReview && comment == draft"
+        },
+        {
+          "command": "smartPrReview.cancelEditDraft",
+          "group": "inline@2",
+          "when": "commentController == smartPrReview && comment == draft"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "node -e \"require('node:fs').rmSync('out', { recursive: true, force: true })\" && tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vscode-test",
+    "package": "vsce package --out smart-pr-review.vsix",
+    "precompile": "node scripts/copy-assets.mjs",
+    "prewatch": "node scripts/copy-assets.mjs"
+  },
+  "dependencies": {
+    "minimatch": "^10.2.6",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "1.95.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^4.0.0",
+    "eslint": "^10.11.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.0"
+  },
+  "overrides": {
+    "mocha": {
+      "diff": "^8.0.4",
+      "serialize-javascript": "^7.0.6"
+    }
+  }
+}
