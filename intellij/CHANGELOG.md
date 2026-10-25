@@ -1,5 +1,10 @@
 # Changelog — IntelliJ Platform
 
+## 0.1.2 — 2026-10-25
+
+### Fixed
+- Respect *Label AI-generated comments* in the review summary: with it off, an AI review no longer adds the "### profile (engine)" heading to its part of the summary.
+
 ## 0.1.1 — 2026-10-10
 
 ### Fixed

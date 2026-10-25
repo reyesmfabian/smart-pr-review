@@ -39,7 +39,7 @@
   "config.profilesPath": "Carpeta del repositorio con los perfiles de revisión (archivos Markdown con un `name` en su frontmatter).",
   "config.aiLanguage": "Idioma de los comentarios y el resumen de la revisión con IA, por ejemplo `Español` o `English`. Vacío: el idioma del título y la descripción del pull request, o el idioma de VS Code si no está claro.",
   "config.aiTimeoutMinutes": "Minutos que puede tardar un engine de IA con un perfil antes de detenerlo.",
-  "config.aiLabelComments": "Agrega \"Generado con IA · perfil · engine\" a los comentarios que redacta una revisión con IA.",
+  "config.aiLabelComments": "Agrega \"Generado con IA · perfil · engine\" a los comentarios que redacta una revisión con IA, y \"### perfil (engine)\" a su parte del resumen.",
   "command.reviewWithAI": "Revisar con IA…",
   "command.createProfile": "Crear perfil de revisión…",
   "welcome.noPullRequest": "No hay ningún pull request en revisión. Elige uno en **Pull Requests**, o búscalo por número, título o autor.\n[Buscar pull requests](command:smartPrReview.searchPullRequests)",

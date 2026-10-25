@@ -184,7 +184,7 @@ private fun applyOutput(o: AiReviewOptions, c: OpenPullRequest, git: Git, profil
     if (o.session.current !== c) return null
     for (d in placement.drafts) o.session.addDraftTo(c, d.path, d.startLine, d.endLine, d.body, d.origin)
     val summary = (listOf(output.summary) + placement.summaryLines).filter { it.isNotEmpty() }.joinToString("\n\n")
-    if (summary.isNotEmpty()) o.session.appendSummaryTo(c, "### ${profile.name} (${engineLabel(o.engine)})\n\n$summary")
+    if (summary.isNotEmpty()) o.session.appendSummaryTo(c, if (o.labelComments) "### ${profile.name} (${engineLabel(o.engine)})\n\n$summary" else summary)
     return placement.drafts.size
 }
 

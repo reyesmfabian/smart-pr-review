@@ -58,14 +58,14 @@ suite("runAiReview", () => {
     return { kind: "cli", id: "fake", executable: node, args: [path] };
   }
 
-  function options(engine: Engine, profiles: Profile[]): AiReviewOptions {
+  function options(engine: Engine, profiles: Profile[], labelComments = true): AiReviewOptions {
     return {
       session,
       profiles,
       engine,
       worktrees: join(storage, "worktrees"),
       timeoutMs: 20_000,
-      labelComments: true,
+      labelComments,
       language: "Spanish",
       token: new vscode.CancellationTokenSource().token,
       log,
@@ -88,6 +88,13 @@ suite("runAiReview", () => {
     assert.doesNotMatch(summary, /README/);
     // The worktree is gone once the review ends.
     assert.strictEqual((await git(repo.root, ["worktree", "list"])).trim().split("\n").length, 1);
+  });
+
+  test("without labels, neither the comments nor the summary name the profile or engine", async () => {
+    await runAiReview(options(await cliEngine(ANSWER), [profile("Security", ["src/**"])], false));
+    const [draft] = session.require().drafts.all();
+    assert.doesNotMatch(draft.body, /Generated with AI/);
+    assert.match(session.require().drafts.summary(), /^One real bug\. cwd=/);
   });
 
   test("skips profiles that match no changed file, without calling the engine", async () => {

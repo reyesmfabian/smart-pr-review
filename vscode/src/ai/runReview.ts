@@ -104,7 +104,16 @@ export async function runAiReview(o: AiReviewOptions): Promise<AiReviewResult> {
 
 /** Folders and files of agent configuration and instructions that CLIs load from a repository, folded. */
 const AGENT_FOLDERS = new Set([".claude", ".cursor", ".codex", ".gemini"]);
-const AGENT_FILES = new Set([".mcp.json", ".cursorrules", "claude.md", "claude.local.md", "agents.md", "agents.override.md", "gemini.md", "copilot-instructions.md"]);
+const AGENT_FILES = new Set([
+  ".mcp.json",
+  ".cursorrules",
+  "claude.md",
+  "claude.local.md",
+  "agents.md",
+  "agents.override.md",
+  "gemini.md",
+  "copilot-instructions.md",
+]);
 
 /** Folds a name the way filesystems do (any case; ſ is s, the Kelvin sign is k): over-matching only deletes more. */
 const fold = (name: string) => name.toUpperCase().toLowerCase();
@@ -292,7 +301,7 @@ async function applyOutput(o: AiReviewOptions, profile: Profile, output: ReviewO
   }
   const summary = [output.summary, ...placement.summaryLines].filter(Boolean).join("\n\n");
   if (summary) {
-    await o.session.appendSummary(`### ${profile.name} (${engineLabel(o.engine)})\n\n${summary}`);
+    await o.session.appendSummary(o.labelComments ? `### ${profile.name} (${engineLabel(o.engine)})\n\n${summary}` : summary);
   }
   return placement.drafts.length;
 }

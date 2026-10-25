@@ -86,7 +86,7 @@ The extension reviews pull requests of the `upstream` remote when it exists (for
 | `smartPrReview.profilesPath` | Folder of the review profiles, inside the repository. Default `.smart-review/profiles`. |
 | `smartPrReview.ai.language` | Language of the AI comments and summary (e.g. `Spanish`). Empty: the language of the pull request, or VS Code's when unclear. |
 | `smartPrReview.ai.timeoutMinutes` | Minutes an engine may take per profile, from 1 to 1440. Default 10. |
-| `smartPrReview.ai.labelComments` | Add "Generated with AI · profile · engine" to AI comments. Default off. |
+| `smartPrReview.ai.labelComments` | Add "Generated with AI · profile · engine" to AI comments and "### profile (engine)" to their part of the summary. Default off. |
 
 ## Security
 

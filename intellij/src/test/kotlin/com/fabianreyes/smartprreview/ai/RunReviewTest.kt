@@ -141,8 +141,8 @@ class RunReviewTest : BasePlatformTestCase() {
     private fun profile(name: String, include: List<String> = emptyList()) =
         Profile(name, "", include, "Look for bugs.", Profile.Source.REPOSITORY, false)
 
-    private fun options(engine: Engine, vararg profiles: Profile, indicator: ProgressIndicator? = null, timeoutMs: Long = 20_000) =
-        AiReviewOptions(session, session.require(), profiles.toList(), engine, storage.resolve("worktrees"), timeoutMs, true, "Spanish", indicator)
+    private fun options(engine: Engine, vararg profiles: Profile, indicator: ProgressIndicator? = null, timeoutMs: Long = 20_000, labelComments: Boolean = true) =
+        AiReviewOptions(session, session.require(), profiles.toList(), engine, storage.resolve("worktrees"), timeoutMs, labelComments, "Spanish", indicator)
 
     private fun worktreeCount() = git.run("worktree", "list").trim().lines().size
 
@@ -192,6 +192,14 @@ class RunReviewTest : BasePlatformTestCase() {
         assertTrue(listing.toString(), "./src/new file.ts" in listing)
         assertFalse(listing.toString(), "./untracked.txt" in listing)
         assertNoWorktrees()
+    }
+
+    fun testWithoutLabelsNeitherTheCommentsNorTheSummaryNameTheProfileOrEngine() {
+        if (SystemInfo.isWindows) return
+        runAiReview(options(answering(), profile("Security", listOf("src/**")), labelComments = false))
+        val draft = session.require().drafts.all().single()
+        assertFalse(draft.body, draft.body.contains(message("ai.generated", "Security", "fake")))
+        assertEquals("One real bug.", session.require().drafts.summary())
     }
 
     fun testTheEngineSeesNoAgentConfigurationNorSymlinksAndNoHookRuns() {
