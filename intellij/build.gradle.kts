@@ -51,6 +51,10 @@ intellijPlatform {
             providers.gradleProperty("verificationIdePath").orNull?.let { local(file(it)) }
         }
     }
+    // JetBrains Marketplace token, set only by the release workflow.
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
+    }
 }
 
 intellijPlatformTesting {

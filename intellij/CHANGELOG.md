@@ -5,6 +5,9 @@
 ### Fixed
 - Respect *Label AI-generated comments* in the review summary: with it off, an AI review no longer adds the "### profile (engine)" heading to its part of the summary.
 
+### Build
+- Publish to JetBrains Marketplace from stable GitHub releases tagged `intellij-v<version>`.
+
 ## 0.1.1 — 2026-10-10
 
 ### Fixed

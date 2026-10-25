@@ -46,7 +46,7 @@ See the [IntelliJ guide](intellij/README.md) for installation and development.
 ## CI and releases
 
 - CI tests and packages both plugins, retaining the VSIX and IntelliJ ZIPs.
-- Stable releases tagged `v<version>` publish **VS Code only**, matching `vscode/package.json`.
-- IntelliJ release tags use `intellij-v<version>`; JetBrains Marketplace publishing is not configured.
+- Stable releases tagged `v<version>` publish the VS Code extension, matching `vscode/package.json`.
+- Stable releases tagged `intellij-v<version>` publish the IntelliJ plugin to JetBrains Marketplace, matching `intellij/build.gradle.kts`; JetBrains reviews each version before listing it.
 
 Both plugins use the [MIT license](LICENSE).

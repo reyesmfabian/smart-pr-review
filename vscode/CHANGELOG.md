@@ -5,6 +5,9 @@
 ### Fixed
 - Respect `smartPrReview.ai.labelComments` in the review summary: with it off, an AI review no longer adds the "### profile (engine)" heading to its part of the summary.
 
+### Changed
+- Update development dependencies to resolve npm audit advisories; none affect the published extension.
+
 ## 0.1.0 — 2026-10-10
 
 ### Added

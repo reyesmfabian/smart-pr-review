@@ -39,4 +39,5 @@ See the [IntelliJ changelog](CHANGELOG.md) for version history.
 See the [privacy notice](PRIVACY.md) for repository requests, local storage and optional AI processing.
 
 CI tests and builds the plugin on Linux and Windows and retains each ZIP.
-JetBrains Marketplace publication is not configured.
+A stable GitHub release tagged `intellij-v<version>` publishes it to JetBrains Marketplace, using the
+`PUBLISH_TOKEN` secret of the `jetbrains-marketplace` environment.

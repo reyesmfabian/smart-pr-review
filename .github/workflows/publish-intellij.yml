@@ -1,0 +1,58 @@
+name: Publish to JetBrains Marketplace
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jetbrains-marketplace-publish
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: intellij
+
+jobs:
+  verify:
+    if: ${{ !github.event.release.prerelease && startsWith(github.event.release.tag_name, 'intellij-v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6.4.0
+      - name: Check release version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(./gradlew properties -q --property version | sed -n 's/^version: //p')
+          test "$RELEASE_TAG" = "intellij-v$version" || { echo "Release tag $RELEASE_TAG must be intellij-v$version"; exit 1; }
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+      - run: xvfb-run -a ./gradlew test buildPlugin
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: jetbrains-marketplace
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6.4.0
+      - name: Publish the plugin
+        env:
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: ./gradlew publishPlugin
