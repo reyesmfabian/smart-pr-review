@@ -52,5 +52,6 @@
   "config.engines.url": "Base URL of an OpenAI-compatible API, the part before `/chat/completions`, for example `http://localhost:11434/v1` (Ollama) or `http://localhost:1234/v1` (LM Studio). The pull request changes are sent there. Use it instead of `command`.",
   "config.engines.contextWindow": "Tokens the server takes per request, prompt and answer together: the context length the model was loaded with (`OLLAMA_CONTEXT_LENGTH` or `num_ctx` in Ollama, *Context Length* in LM Studio, `-c` in llama.cpp). A value above the server's lets it cut the prompt without notice. Only for engines with `url`.",
   "config.engines.maxOutputTokens": "Tokens of `contextWindow` kept for the answer, sent as `max_tokens`. Reasoning models spend them thinking too: give them room (for example 32768) or turn their reasoning down. Only for engines with `url`.",
-  "command.setEngineApiKey": "Set API Key of an AI Engine"
+  "command.setEngineApiKey": "Set API Key of an AI Engine",
+  "config.engines.reasoningEffort": "How much a reasoning model thinks before answering: `none`, `minimal`, `low`, `medium`, `high` or `xhigh`, sent as `reasoning_effort`. Each model takes some of them (Qwen 3.8: `low`, `medium`, `xhigh`), and the server must support it (LM Studio 0.4.8 or later, vLLM, OpenRouter…); without it the model uses its default, often the highest. Less reasoning is faster and needs less `maxOutputTokens`. Only for engines with `url`."
 }

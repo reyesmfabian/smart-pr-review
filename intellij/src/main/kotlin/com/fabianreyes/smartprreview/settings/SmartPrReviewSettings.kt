@@ -18,7 +18,8 @@ import com.intellij.openapi.components.service
  * With [url] it is a server with the OpenAI chat completions API instead (Ollama, LM Studio, vLLM, llama.cpp,
  * OpenRouter…) and `command` is empty: the review always asks for a model, of [models] plus the ones the server
  * lists. [contextWindow] is the tokens the server takes per request, prompt and answer together; [maxOutputTokens]
- * of them are kept for the answer (reasoning included) and sent as max_tokens.
+ * of them are kept for the answer (reasoning included) and sent as max_tokens. [reasoningEffort], one of
+ * [REASONING_EFFORTS], is sent as reasoning_effort; without it the model thinks as much as its default.
  */
 data class Engine(
     val command: String,
@@ -30,7 +31,11 @@ data class Engine(
     val url: String? = null,
     val contextWindow: Int = DEFAULT_CONTEXT_WINDOW,
     val maxOutputTokens: Int = DEFAULT_MAX_OUTPUT_TOKENS,
+    val reasoningEffort: String? = null,
 )
+
+/** The values of reasoning_effort across OpenAI-compatible servers; each model takes some of them. */
+val REASONING_EFFORTS = listOf("none", "minimal", "low", "medium", "high", "xhigh")
 
 const val DEFAULT_CONTEXT_WINDOW = 8192
 const val DEFAULT_MAX_OUTPUT_TOKENS = 4096
@@ -102,6 +107,7 @@ class SmartPrReviewSettings : PersistentStateComponent<SmartPrReviewSettings.Sta
             val url: String? = null,
             val contextWindow: Int? = null,
             val maxOutputTokens: Int? = null,
+            val reasoningEffort: String? = null,
         )
 
         private fun isHttpUrl(value: String) = try {
@@ -117,9 +123,11 @@ class SmartPrReviewSettings : PersistentStateComponent<SmartPrReviewSettings.Sta
             val output = engine.maxOutputTokens ?: DEFAULT_MAX_OUTPUT_TOKENS
             require(window > 0 && output > 0) { "engine \"$key\": contextWindow and maxOutputTokens must be positive" }
             require(output < window) { "engine \"$key\": maxOutputTokens ($output) leaves no room for the prompt in contextWindow ($window)" }
+            val effort = engine.reasoningEffort?.takeIf { it.isNotBlank() }
+            require(effort == null || effort in REASONING_EFFORTS) { "engine \"$key\": reasoningEffort must be one of ${REASONING_EFFORTS.joinToString()}" }
             return Engine(
                 "", models = engine.models ?: emptyList(), defaultModel = engine.defaultModel?.takeIf { it.isNotBlank() },
-                url = url, contextWindow = window, maxOutputTokens = output,
+                url = url, contextWindow = window, maxOutputTokens = output, reasoningEffort = effort,
             )
         }
 

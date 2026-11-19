@@ -115,7 +115,9 @@ class AiReviewAction : DumbAwareAction(message("ai.reviewWithAi"), null, AllIcon
         val url = settings.url
         var apiKey: String? = null
         fun engine(model: String?): ReviewEngine =
-            if (url != null) UrlEngine(choice.id, model ?: error("a URL engine needs a model"), url, settings.contextWindow, settings.maxOutputTokens, apiKey)
+            if (url != null) {
+                UrlEngine(choice.id, model ?: error("a URL engine needs a model"), url, settings.contextWindow, settings.maxOutputTokens, apiKey, settings.reasoningEffort)
+            }
             else choice.toEngine(model) ?: error("engine without executable")
         fun show(listed: List<CliModel>) = stage(project) {
             pickModel(

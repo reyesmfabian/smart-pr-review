@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 — 2026-11-19
+
+### Added
+- `reasoningEffort` on a URL engine (`none` to `xhigh`) is sent as `reasoning_effort`, so a reasoning model can think less and answer sooner.
+
+### Fixed
+- An AI review that failed or timed out kept **Review with AI** busy until its warning was closed, and the warning could sit unnoticed in the notification center: a new review said one was already running until VS Code restarted. The same happened when the chosen engine was not installed.
+- A URL engine cut every request at 5 minutes: without streaming the server sends nothing until the model has finished, and VS Code's `fetch` gives up on a response whose headers take that long. On a large pull request every part of the review failed and no comments came back. Only `smartPrReview.ai.timeoutMinutes` stops the request now.
+
+### Changed
+- A URL engine reviews with one profile at a time. A local server answers one request at a time, so the other profiles waited in its queue and that wait counted against the timeout.
+
 ## 0.3.0 — 2026-11-19
 
 ### Added

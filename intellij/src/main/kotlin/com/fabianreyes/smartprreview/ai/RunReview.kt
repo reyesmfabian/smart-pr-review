@@ -86,7 +86,7 @@ fun <T> cancelWhenDisposed(parent: Disposable, indicator: ProgressIndicator, wor
 fun isBinary(text: String): Boolean = '\u0000' in text
 
 /**
- * Reviews the open pull request with each profile in parallel and turns the findings into drafts plus a
+ * Reviews the open pull request with each profile in parallel (one at a time with a URL engine) and turns the findings into drafts plus a
  * summary section per profile. A command-line engine reads a detached worktree of the head, removed at the end;
  * a URL engine gets the files in the prompt instead. The engines are stopped when the review is cancelled, and
  * also when another pull request is opened or this one is refreshed: their findings would be discarded.
@@ -156,7 +156,8 @@ private sealed interface Outcome {
 }
 
 private fun runProfiles(o: AiReviewOptions, c: OpenPullRequest, git: Git, worktree: Path?): List<Outcome> {
-    val pool = Executors.newFixedThreadPool(o.profiles.size)
+    // A URL engine gets one profile at a time: a local server queues the other requests, and their wait would count against the timeout.
+    val pool = Executors.newFixedThreadPool(if (o.engine is UrlEngine) 1 else o.profiles.size)
     try {
         // invokeAll waits for every profile (allSettled): one failing does not stop the others.
         return pool.invokeAll(o.profiles.map { profile -> Callable { reviewWithProfile(o, c, git, profile, worktree) } }).map {

@@ -88,6 +88,7 @@ The pull request content is untrusted, so give your engine the flags that stop i
 - `url` is the base of the API, the part before `/chat/completions`. The review asks for the model on every review, offering `models` and the ones the server lists.
 - `contextWindow` (default 8192) is the context length the server loaded the model with, prompt and answer together: `OLLAMA_CONTEXT_LENGTH` or `num_ctx` in Ollama, *Context Length* in LM Studio, `-c` in llama.cpp. Set it to the server's value: a larger one lets the server cut the prompt without notice.
 - `maxOutputTokens` (default 4096) is the part of it kept for the answer, sent as `max_tokens`. Reasoning models spend it thinking too, so give them room (for example 32768) or turn their reasoning down: an answer cut short fails with a message that says so.
+- `reasoningEffort` (`none`, `minimal`, `low`, `medium`, `high` or `xhigh`) is sent as `reasoning_effort` and tells a reasoning model how much to think. Each model takes some of these values (Qwen 3.8: `low`, `medium`, `xhigh`) and the server must support it (LM Studio 0.4.8 or later, vLLM, OpenRouter). Without it the model uses its default, often the highest: lowering it makes reviews much faster and needs less `maxOutputTokens`.
 - If the server needs an API key, set it with **Set API Key of an AI Engine**. It is kept in VS Code's secret storage under the URL, so it is never sent to another server, even if you change the URL.
 
 ## Requirements

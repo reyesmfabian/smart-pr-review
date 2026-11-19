@@ -1,6 +1,8 @@
 import * as assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { createServer, type IncomingHttpHeaders } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
@@ -26,6 +28,38 @@ async function script(source: string): Promise<{ dir: string; path: string }> {
   const path = join(dir, "engine.js");
   await writeFile(path, source);
   return { dir, path };
+}
+
+/**
+ * A local OpenAI-compatible server that records each request and answers with `answer` (status and JSON body);
+ * without an answer it never responds. `aborted` counts the requests the client gave up on.
+ */
+async function chatServer(answer: () => { status?: number; body: unknown } | undefined) {
+  const requests: { path: string; method: string; headers: IncomingHttpHeaders; body: Record<string, unknown> }[] = [];
+  let aborted = 0;
+  const server = createServer((req, res) => {
+    let text = "";
+    req.on("data", (chunk) => (text += chunk));
+    req.on("end", () => {
+      requests.push({ path: req.url ?? "", method: req.method ?? "", headers: req.headers, body: JSON.parse(text) });
+      const a = answer();
+      if (a) {
+        res.writeHead(a.status ?? 200, { "content-type": "application/json" }).end(JSON.stringify(a.body));
+      }
+    });
+    res.on("close", () => (aborted += res.writableEnded ? 0 : 1));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    // With a trailing slash, as users may write it.
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/`,
+    requests,
+    aborted: () => aborted,
+    close: () => {
+      server.closeAllConnections();
+      return new Promise((resolve) => server.close(resolve));
+    },
+  };
 }
 
 const READ_STDIN = "let input = ''; process.stdin.setEncoding('utf8').on('data', c => (input += c));";
@@ -183,74 +217,72 @@ suite("AI engines", () => {
     await assert.rejects(runChat(quitter, "p", cancellation.token, 10_000), (e: unknown) => e instanceof vscode.CancellationError);
   });
 
-  test("URL engines: sends the prompt with the model, max_tokens and the API key, and returns the answer without its reasoning", async () => {
+  test("URL engines: sends the prompt with the model, max_tokens, reasoning effort and API key, and returns the answer without its reasoning", async () => {
     const json = '```json\n{"summary":"ok","findings":[]}\n```';
-    const fetch = stubFetch(() => ({ body: { choices: [{ message: { content: `<think>maybe { this</think>\n${json}` }, finish_reason: "stop" }] } }));
+    const server = await chatServer(() => ({ body: { choices: [{ message: { content: `<think>maybe { this</think>\n${json}` }, finish_reason: "stop" }] } }));
     try {
-      const model = urlChatModel({ url: "http://192.168.1.50:1234/v1/", contextWindow: 32768, maxOutputTokens: 8192 }, "qwen3.8-27b", "secret");
+      const engine = { url: server.url, contextWindow: 32768, maxOutputTokens: 8192, reasoningEffort: "medium" } as const;
+      const model = urlChatModel(engine, "qwen3.8-27b", "secret");
       // The window minus what is kept for the answer; tokens estimated at 3 characters each.
       assert.strictEqual(model.maxInputTokens, 24576);
       assert.strictEqual(await model.countTokens("x".repeat(30)), 10);
       assert.strictEqual(await runChat(model, "the prompt", new vscode.CancellationTokenSource().token, 10_000), `\n${json}`);
-      assert.strictEqual(fetch.calls[0].url, "http://192.168.1.50:1234/v1/chat/completions");
-      assert.strictEqual(fetch.calls[0].init.method, "POST");
-      assert.strictEqual((fetch.calls[0].init.headers as Record<string, string>).authorization, "Bearer secret");
-      assert.deepStrictEqual(fetch.body(0), {
+      assert.strictEqual(server.requests[0].path, "/v1/chat/completions");
+      assert.strictEqual(server.requests[0].method, "POST");
+      assert.strictEqual(server.requests[0].headers.authorization, "Bearer secret");
+      assert.deepStrictEqual(server.requests[0].body, {
         model: "qwen3.8-27b",
         messages: [{ role: "user", content: "the prompt" }],
         max_tokens: 8192,
         stream: false,
+        reasoning_effort: "medium",
       });
     } finally {
-      fetch.restore();
+      await server.close();
     }
   });
 
   test("URL engines: says why an answer was cut, a key rejected, a request refused or a server misread, naming the server", async () => {
-    const engine = { url: "http://localhost:1234/v1", contextWindow: 8192, maxOutputTokens: 4096 };
-    const token = new vscode.CancellationTokenSource().token;
     const answers = [
       { body: { choices: [{ message: { content: "<think>still thinking" }, finish_reason: "length" }] } },
       { status: 401, body: { error: { message: "Invalid API key" } } },
       { status: 404, body: { error: "model 'nope' not found" } },
       { body: { ok: true } },
     ];
-    const fetch = stubFetch(() => {
-      const answer = answers.shift();
-      if (!answer) {
-        // What fetch throws when nothing listens on the port.
-        throw new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED 127.0.0.1:1234") });
-      }
-      return answer;
-    });
-    const review = (model: string, apiKey?: string) => runChat(urlChatModel(engine, model, apiKey), "p", token, 10_000);
+    const server = await chatServer(() => answers.shift());
+    const engine = { url: server.url, contextWindow: 8192, maxOutputTokens: 4096 };
+    const review = (model: string, apiKey?: string) => runChat(urlChatModel(engine, model, apiKey), "p", new vscode.CancellationTokenSource().token, 10_000);
     try {
       await assert.rejects(review("m"), /used up maxOutputTokens \(4096\)/);
-      await assert.rejects(review("m", "bad"), /localhost:1234\/v1 rejected the API key \(HTTP 401\)/);
+      // Without a reasoning effort the server's default applies: none is sent.
+      assert.strictEqual(server.requests[0].body.reasoning_effort, undefined);
+      await assert.rejects(review("m", "bad"), /127\.0\.0\.1:\d+\/v1\/ rejected the API key \(HTTP 401\)/);
       await assert.rejects(review("nope"), /answered HTTP 404: model 'nope' not found/);
       await assert.rejects(review("m"), /did not answer like an OpenAI-compatible API/);
-      await assert.rejects(review("m"), /Could not reach http:\/\/localhost:1234\/v1: connect ECONNREFUSED/);
     } finally {
-      fetch.restore();
+      await server.close();
     }
+    // A port nothing listens on any more, and never connected to: no pooled connection to it either.
+    const gone = await chatServer(() => undefined);
+    await gone.close();
+    const refused = urlChatModel({ ...engine, url: gone.url }, "m", undefined);
+    await assert.rejects(
+      runChat(refused, "p", new vscode.CancellationTokenSource().token, 10_000),
+      /Could not reach http:\/\/127\.0\.0\.1:\d+\/v1\/: connect ECONNREFUSED/,
+    );
   });
 
   test("URL engines: a request that takes longer than the timeout is stopped", async () => {
-    const original = globalThis.fetch;
-    let aborted = false;
-    globalThis.fetch = ((_url: string, init: RequestInit) =>
-      new Promise((_resolve, reject) =>
-        init.signal?.addEventListener("abort", () => {
-          aborted = true;
-          reject(new DOMException("aborted", "AbortError"));
-        }),
-      )) as typeof fetch;
+    const server = await chatServer(() => undefined);
     try {
-      const model = urlChatModel({ url: "http://localhost:1234/v1", contextWindow: 8192, maxOutputTokens: 4096 }, "m", undefined);
-      await assert.rejects(runChat(model, "p", new vscode.CancellationTokenSource().token, 200), /did not answer/);
-      assert.strictEqual(aborted, true);
+      const model = urlChatModel({ url: server.url, contextWindow: 8192, maxOutputTokens: 4096 }, "m", undefined);
+      await assert.rejects(runChat(model, "p", new vscode.CancellationTokenSource().token, 200), /did not answer within/);
+      for (let i = 0; i < 50 && server.aborted() === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.strictEqual(server.aborted(), 1);
     } finally {
-      globalThis.fetch = original;
+      await server.close();
     }
   });
 

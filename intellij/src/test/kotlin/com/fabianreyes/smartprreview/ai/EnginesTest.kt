@@ -306,16 +306,16 @@ class EnginesTest : BasePlatformTestCase() {
         throw AssertionError("expected an EngineException")
     }
 
-    fun testAUrlEngineSendsThePromptWithTheModelMaxTokensAndKeyAndDropsTheReasoning() {
+    fun testAUrlEngineSendsThePromptWithTheModelMaxTokensReasoningEffortAndKeyAndDropsTheReasoning() {
         val json = "```json\n{\"summary\":\"ok\",\"findings\":[]}\n```"
         FakeChatServer { completion("<think>maybe { this</think>\n$json") }.use { server ->
-            val engine = UrlEngine("qwen", "qwen3.8-27b", server.url, 32768, 8192, "secret")
+            val engine = UrlEngine("qwen", "qwen3.8-27b", server.url, 32768, 8192, "secret", reasoningEffort = "medium")
             assertEquals(24576, engine.maxInputTokens)
             assertEquals("\n$json", runChat(engine, "the prompt", null, 10_000))
             val request = server.requests.single()
             assertEquals(listOf("POST", "/v1/chat/completions", "Bearer secret"), listOf(request.method, request.path, request.authorization))
             assertEquals(
-                JsonParser.parseString("""{"model":"qwen3.8-27b","messages":[{"role":"user","content":"the prompt"}],"max_tokens":8192,"stream":false}"""),
+                JsonParser.parseString("""{"model":"qwen3.8-27b","messages":[{"role":"user","content":"the prompt"}],"max_tokens":8192,"stream":false,"reasoning_effort":"medium"}"""),
                 JsonParser.parseString(request.body),
             )
             // Engines end up in logs.
@@ -333,6 +333,8 @@ class EnginesTest : BasePlatformTestCase() {
         val url = FakeChatServer { answers.removeFirst() }.use { server ->
             val engine = UrlEngine("x", "m", server.url, 8192, 4096, null)
             assertEquals(SmartPrReviewBundle.message("ai.outputCut", 4096), engineError { runChat(engine, "p", null, 10_000) })
+            // Without a reasoning effort the server's default applies: none is sent.
+            assertNull(JsonParser.parseString(server.requests.first().body).asJsonObject["reasoning_effort"])
             assertEquals(SmartPrReviewBundle.message("ai.apiKeyRejected", server.url, 401), engineError { runChat(engine.copy(apiKey = "bad"), "p", null, 10_000) })
             assertEquals(
                 SmartPrReviewBundle.message("ai.httpFailed", server.url, 404, "model 'nope' not found"),

@@ -28,7 +28,7 @@ export async function requestJson<T>(url: string, init: RequestInit = {}): Promi
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
-function errorMessage(text: string): string {
+export function errorMessage(text: string): string {
   try {
     // GitHub and Azure DevOps answer { message, errors }; OpenAI-compatible servers { error: { message } } or { error }.
     const body = JSON.parse(text) as { message?: string; errors?: unknown[]; error?: string | { message?: string } };

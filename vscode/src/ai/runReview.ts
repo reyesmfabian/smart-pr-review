@@ -51,7 +51,7 @@ export interface AiReviewResult {
 }
 
 /**
- * Reviews the open pull request with each profile in parallel and turns the findings into drafts plus a
+ * Reviews the open pull request with each profile in parallel (one at a time with a URL engine) and turns the findings into drafts plus a
  * summary section per profile. CLI engines read a detached worktree of the head, removed at the end.
  * The engines are stopped when the review is cancelled, and also when another pull request is opened or
  * this one is refreshed: their findings would be discarded.
@@ -85,8 +85,19 @@ export async function runAiReview(options: AiReviewOptions): Promise<AiReviewRes
       await removeAgentConfiguration(worktree, (message) => o.log.warn(message));
     }
     const result: AiReviewResult = { drafts: 0, reviewed: [], failures: [] };
+    const review = async (profile: Profile) => ({ profile, output: await reviewWithProfile(o, profile, worktree) });
+    // A URL engine gets one profile at a time: a local server queues the other requests, and their wait would count against the timeout.
+    let previous: Promise<unknown> = Promise.resolve();
+    const inTurn = (profile: Profile) => {
+      const run = previous.then(
+        () => review(profile),
+        () => review(profile),
+      );
+      previous = run;
+      return run;
+    };
     // allSettled: every engine has exited before the worktree is removed, even when one is cancelled.
-    const settled = await Promise.allSettled(o.profiles.map(async (profile) => ({ profile, output: await reviewWithProfile(o, profile, worktree) })));
+    const settled = await Promise.allSettled(o.profiles.map(o.engine.kind === "url" ? inTurn : review));
     const outputs = settled.map((s, i) => {
       if (s.status === "fulfilled") {
         return s.value;

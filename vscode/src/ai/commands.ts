@@ -17,6 +17,8 @@ import {
   isModelName,
   listCliModels,
   listUrlModels,
+  REASONING_EFFORTS,
+  type ReasoningEffort,
   type UrlEngineConfig,
   urlChatModel,
 } from "./engines";
@@ -92,14 +94,18 @@ export function installGuide(id: string): string | undefined {
   return INSTALL_GUIDES.get(id);
 }
 
-/** Says an engine is missing, with a link to its installation guide when there is one. */
-async function reportMissing(message: string, id: string): Promise<undefined> {
+/**
+ * Says an engine is missing, with a link to its installation guide when there is one. Not awaited: a notification
+ * settles only when it is closed, and one left in the notification center would keep the next review from starting.
+ */
+function reportMissing(message: string, id: string): undefined {
   const guide = installGuide(id);
   const install = vscode.l10n.t("How to Install");
-  const choice = await vscode.window.showErrorMessage(message, ...(guide ? [install] : []));
-  if (guide && choice === install) {
-    await vscode.env.openExternal(vscode.Uri.parse(guide));
-  }
+  void vscode.window.showErrorMessage(message, ...(guide ? [install] : [])).then((choice) => {
+    if (guide && choice === install) {
+      void vscode.env.openExternal(vscode.Uri.parse(guide));
+    }
+  });
   return undefined;
 }
 
@@ -228,9 +234,12 @@ async function review(
       result.failures.length,
       describeFailures(result.failures),
     );
-    if ((await vscode.window.showWarningMessage(message, show)) === show) {
-      aiLog.show();
-    }
+    // Not awaited, like reportMissing: the review is over, and the next one must not wait for this notification.
+    void vscode.window.showWarningMessage(message, show).then((choice) => {
+      if (choice === show) {
+        aiLog.show();
+      }
+    });
   } else if (result.reviewed.length === 0) {
     void vscode.window.showInformationMessage(vscode.l10n.t("No changed file matches the chosen profiles."));
   } else {
@@ -301,6 +310,7 @@ function asEngines(value: unknown): Record<string, EngineConfig> {
       url?: unknown;
       contextWindow?: unknown;
       maxOutputTokens?: unknown;
+      reasoningEffort?: unknown;
     };
     const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((a) => typeof a === "string");
     // The model fields are optional extras: a malformed one is left out, the engine still works.
@@ -313,6 +323,7 @@ function asEngines(value: unknown): Record<string, EngineConfig> {
         url: e.url,
         contextWindow: positiveInteger(e.contextWindow) ?? DEFAULT_CONTEXT_WINDOW,
         maxOutputTokens: positiveInteger(e.maxOutputTokens) ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        ...(REASONING_EFFORTS.includes(e.reasoningEffort as ReasoningEffort) ? { reasoningEffort: e.reasoningEffort as ReasoningEffort } : {}),
         ...models,
       };
     } else if (typeof e.command === "string" && e.command && (e.args === undefined || strings(e.args))) {

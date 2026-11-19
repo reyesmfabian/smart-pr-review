@@ -111,6 +111,26 @@ suite("runAiReview", () => {
     assert.strictEqual((await git(repo.root, ["worktree", "list"])).trim().split("\n").length, 1);
   });
 
+  test("a URL engine gets one request at a time: a local server queues the others, and their wait would count against the timeout", async () => {
+    const fake = fakeModel(ANSWER);
+    let running = 0;
+    let most = 0;
+    const model: ChatModel = {
+      ...fake.model,
+      sendRequest: async (...args) => {
+        most = Math.max(most, ++running);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        running--;
+        return fake.model.sendRequest(...args);
+      },
+    };
+    const profiles = [profile("A", ["src/**"]), profile("B", ["src/**"]), profile("C", ["src/**"])];
+    const result = await runAiReview(options({ kind: "url", id: "qwen", model }, profiles));
+    assert.deepStrictEqual(result.failures, []);
+    assert.strictEqual(fake.prompts.length, 3);
+    assert.strictEqual(most, 1);
+  });
+
   test("GitHub Copilot gets the new version of each file, since it cannot read the repository", async () => {
     const fake = fakeModel(ANSWER);
     const result = await runAiReview(options({ kind: "copilot", id: "copilot", model: fake.model }, [profile("Security", ["src/**"])]));

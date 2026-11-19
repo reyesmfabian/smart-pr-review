@@ -1,10 +1,12 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { delimiter, extname, isAbsolute, join } from "node:path";
 import * as vscode from "vscode";
-import { HttpError, requestJson } from "../http";
+import { errorMessage, HttpError, requestJson } from "../http";
 
 /** A command-line engine from the setting smartPrReview.engines. The prompt goes through stdin; the answer is stdout. */
 export interface CliEngineConfig {
@@ -293,7 +295,13 @@ export interface UrlEngineConfig {
   contextWindow: number;
   /** Tokens kept for the answer, reasoning included; sent as max_tokens. */
   maxOutputTokens: number;
+  /** How much a reasoning model thinks before answering; sent as reasoning_effort, the server's default without it. */
+  reasoningEffort?: ReasoningEffort;
 }
+
+/** The values of reasoning_effort across OpenAI-compatible servers; each model takes some of them. */
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export const DEFAULT_CONTEXT_WINDOW = 8192;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
@@ -337,10 +345,13 @@ function apiError(engine: UrlEngineConfig, error: unknown): Error {
         : vscode.l10n.t("{0} answered HTTP {1}: {2}", engine.url, error.status, error.message),
     );
   }
-  // fetch reports a refused connection or an unknown host as a TypeError whose cause says which.
+  // A refused connection or an unknown host: fetch throws a TypeError whose cause says which, node:http the system error.
   if (error instanceof TypeError) {
     const cause = (error as { cause?: { message?: unknown } }).cause?.message;
     return new Error(vscode.l10n.t("Could not reach {0}: {1}", engine.url, typeof cause === "string" ? cause : error.message));
+  }
+  if (error instanceof Error && "syscall" in error) {
+    return new Error(vscode.l10n.t("Could not reach {0}: {1}", engine.url, error.message));
   }
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -366,6 +377,38 @@ export async function listUrlModels(
   }
 }
 
+/**
+ * POSTs JSON with node:http rather than fetch: fetch gives up when the response headers take more than 5 minutes,
+ * and a server answering without streaming sends none until the model has finished, which a large pull request
+ * can take longer than. Only `signal` (the review's timeout or cancellation) stops it. A body that is not JSON is
+ * undefined.
+ */
+function postJson<T>(url: string, headers: Record<string, string>, body: string, signal: AbortSignal): Promise<T | undefined> {
+  return new Promise((resolve, reject) => {
+    const send = url.startsWith("https:") ? httpsRequest : httpRequest;
+    const request = send(url, { method: "POST", headers: { ...headers, "content-length": Buffer.byteLength(body) }, signal }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        const status = response.statusCode ?? 0;
+        if (status < 200 || status >= 300) {
+          reject(new HttpError(status, errorMessage(text) || response.statusMessage || ""));
+          return;
+        }
+        try {
+          resolve(JSON.parse(text) as T);
+        } catch {
+          resolve(undefined);
+        }
+      });
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
 interface ChatCompletion {
   choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
 }
@@ -388,12 +431,18 @@ export function urlChatModel(engine: UrlEngineConfig, model: string, apiKey: str
       const abort = abortOn(token);
       let body: ChatCompletion | undefined;
       try {
-        body = await requestJson<ChatCompletion>(`${apiBase(engine)}/chat/completions`, {
-          method: "POST",
-          headers: { ...authorization(apiKey), "content-type": "application/json" },
-          body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], max_tokens: engine.maxOutputTokens, stream: false }),
-          signal: abort.signal,
-        });
+        body = await postJson<ChatCompletion>(
+          `${apiBase(engine)}/chat/completions`,
+          { ...authorization(apiKey), "content-type": "application/json" },
+          JSON.stringify({
+            model,
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: engine.maxOutputTokens,
+            stream: false,
+            ...(engine.reasoningEffort ? { reasoning_effort: engine.reasoningEffort } : {}),
+          }),
+          abort.signal,
+        );
       } catch (error) {
         throw apiError(engine, error);
       } finally {

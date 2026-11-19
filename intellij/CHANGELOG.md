@@ -1,5 +1,13 @@
 # Changelog — IntelliJ Platform
 
+## 0.4.0 — 2026-11-19
+
+### Added
+- `reasoningEffort` on a URL engine (`none` to `xhigh`) is sent as `reasoning_effort`, so a reasoning model can think less and answer sooner.
+
+### Changed
+- A URL engine reviews with one profile at a time. A local server answers one request at a time, so the other profiles waited in its queue and that wait counted against the timeout.
+
 ## 0.3.0 — 2026-11-19
 
 ### Added

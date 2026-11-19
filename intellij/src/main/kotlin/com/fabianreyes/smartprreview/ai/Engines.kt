@@ -55,6 +55,8 @@ data class UrlEngine(
     /** Tokens kept for the answer, reasoning included; sent as max_tokens. */
     val maxOutputTokens: Int,
     val apiKey: String?,
+    /** Sent as reasoning_effort; null leaves the model's default. */
+    val reasoningEffort: String? = null,
 ) : ReviewEngine {
     val maxInputTokens: Int get() = contextWindow - maxOutputTokens
 
@@ -344,6 +346,7 @@ fun runChat(engine: UrlEngine, prompt: String, indicator: ProgressIndicator?, ti
         add("messages", JsonArray().apply { add(JsonObject().apply { addProperty("role", "user"); addProperty("content", prompt) }) })
         addProperty("max_tokens", engine.maxOutputTokens)
         addProperty("stream", false)
+        engine.reasoningEffort?.let { addProperty("reasoning_effort", it) }
     }
     val request = HttpRequest.newBuilder(URI("${apiBase(engine.url)}/chat/completions"))
         .authorization(engine.apiKey)

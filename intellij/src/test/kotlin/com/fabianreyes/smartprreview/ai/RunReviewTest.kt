@@ -211,6 +211,23 @@ class RunReviewTest : BasePlatformTestCase() {
         }
     }
 
+    fun testAUrlEngineGetsOneRequestAtATimeSinceALocalServerQueuesTheOthersAgainstTheTimeout() {
+        val running = java.util.concurrent.atomic.AtomicInteger()
+        val most = java.util.concurrent.atomic.AtomicInteger()
+        FakeChatServer {
+            most.accumulateAndGet(running.incrementAndGet(), ::maxOf)
+            Thread.sleep(100)
+            running.decrementAndGet()
+            completion(answer)
+        }.use { server ->
+            val engine = UrlEngine("qwen", "qwen3.8-27b", server.url, 32768, 4096, null)
+            val result = runAiReview(options(engine, profile("A", listOf("src/**")), profile("B", listOf("src/**")), profile("C", listOf("src/**"))))
+            assertEquals(emptyList<Any>(), result.failures)
+            assertEquals(3, server.requests.size)
+            assertEquals(1, most.get())
+        }
+    }
+
     fun testWithoutLabelsNeitherTheCommentsNorTheSummaryNameTheProfileOrEngine() {
         if (SystemInfo.isWindows) return
         runAiReview(options(answering(), profile("Security", listOf("src/**")), labelComments = false))

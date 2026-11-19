@@ -38,6 +38,35 @@ suite("AI commands", () => {
     session.dispose();
   });
 
+  test("a review that fails is over even while its warning stays open in the notification center", async function () {
+    this.timeout(60_000);
+    const repo = await makeRepo();
+    const session = new ReviewSession(new FakeProvider(repo), repo.root, "origin", memento(), "github:octo/app");
+    await session.open(1);
+    const config = vscode.workspace.getConfiguration("smartPrReview");
+    await config.update("engines", { failing: { command: "node", args: ["-e", "process.exit(3)"] } }, vscode.ConfigurationTarget.Global);
+    const window = vscode.window as unknown as Record<string, unknown>;
+    const original = { showQuickPick: window.showQuickPick, showWarningMessage: window.showWarningMessage };
+    const warnings: string[] = [];
+    // One profile, then the failing engine; the warning is never closed, like a toast that hid itself.
+    window.showQuickPick = async (items: { id?: string; picked?: boolean }[], options?: vscode.QuickPickOptions) =>
+      options?.canPickMany ? items.filter((i) => i.picked).slice(0, 1) : items.find((i) => i.id === "failing");
+    window.showWarningMessage = (message: string) => {
+      warnings.push(message);
+      return new Promise(() => {});
+    };
+    try {
+      const review = reviewWithAi(session, join(__dirname, "../.."), tmpdir(), memento(), secrets());
+      const finished = await Promise.race([review.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), 30_000))]);
+      assert.strictEqual(finished, true, "the review waited for its warning to be closed");
+      assert.match(warnings.join("\n"), /failed: .*code 3/);
+    } finally {
+      Object.assign(window, original);
+      await config.update("engines", undefined, vscode.ConfigurationTarget.Global);
+      session.dispose();
+    }
+  });
+
   test("keeps the bundled engines next to the ones the user adds or overrides", () => {
     const engines = aiEngines({
       defaultValue: { claude: { command: "claude", args: ["-p"] }, codex: { command: "codex" } },
@@ -70,11 +99,17 @@ suite("AI commands", () => {
     });
   });
 
-  test("reads engines reached by URL, with the default window and answer budget when theirs are missing or malformed", () => {
+  test("reads engines reached by URL, with the default window and answer budget when theirs are missing or malformed, and no unknown reasoning effort", () => {
     const engines = aiEngines({
       globalValue: {
-        qwen: { url: "http://192.168.1.50:1234/v1/", contextWindow: 262144, maxOutputTokens: 32768, models: ["qwen3.8-27b", "two words"] },
-        ollama: { url: "http://localhost:11434/v1", contextWindow: "big", maxOutputTokens: -1, defaultModel: "qwen2.5-coder:14b" },
+        qwen: {
+          url: "http://192.168.1.50:1234/v1/",
+          contextWindow: 262144,
+          maxOutputTokens: 32768,
+          models: ["qwen3.8-27b", "two words"],
+          reasoningEffort: "medium",
+        },
+        ollama: { url: "http://localhost:11434/v1", contextWindow: "big", maxOutputTokens: -1, defaultModel: "qwen2.5-coder:14b", reasoningEffort: "turbo" },
         // url wins over command: the entry is a server.
         both: { url: "https://openrouter.ai/api/v1", command: "x" },
         ftp: { url: "ftp://host/v1" },
@@ -82,7 +117,7 @@ suite("AI commands", () => {
       },
     });
     assert.deepStrictEqual(engines, {
-      qwen: { url: "http://192.168.1.50:1234/v1/", contextWindow: 262144, maxOutputTokens: 32768, models: ["qwen3.8-27b"] },
+      qwen: { url: "http://192.168.1.50:1234/v1/", contextWindow: 262144, maxOutputTokens: 32768, models: ["qwen3.8-27b"], reasoningEffort: "medium" },
       ollama: { url: "http://localhost:11434/v1", contextWindow: 8192, maxOutputTokens: 4096, defaultModel: "qwen2.5-coder:14b" },
       both: { url: "https://openrouter.ai/api/v1", contextWindow: 8192, maxOutputTokens: 4096 },
     });
