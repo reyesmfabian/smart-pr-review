@@ -15,8 +15,8 @@ const SHIPPED = [
   /^images\/icon\.png$/,
   /^package(\.nls(\.[\w-]+)?)?\.json$/,
   /^(README\.md|CHANGELOG\.md|LICENSE)$/,
-  // dist/commonjs/package.json marks those files as CommonJS: needed.
-  /^node_modules\/[^/]+\/(package\.json|LICENSE(\.md)?|dist\/(?!esm\/).+\.js(on)?)$/,
+  // dist/commonjs/package.json marks those files as CommonJS: needed. Scoped packages (@scope/name) follow the same rule.
+  /^node_modules\/(@[^/]+\/)?[^/]+\/(package\.json|LICENSE(\.md)?|dist\/(?!esm\/).+\.js(on)?)$/,
 ];
 
 suite("manifest", () => {
