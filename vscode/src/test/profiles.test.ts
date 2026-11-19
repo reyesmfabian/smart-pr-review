@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { appliesTo, loadProfiles, parseProfile, type Profile } from "../ai/profiles";
@@ -54,8 +54,11 @@ suite("review profiles", () => {
       name: "Security",
       description: "Inputs",
       include: ["src/**"],
+      exclude: [],
       body: "Check inputs.",
     });
+    assert.deepStrictEqual(parseProfile('---\nname: A\nexclude:\n  - "**/*.lock"\n  - 3\n---\n')?.exclude, ["**/*.lock"]);
+    assert.deepStrictEqual(parseProfile('---\nname: A\nexclude: "dist/**"\n---\n')?.exclude, ["dist/**"]);
     assert.deepStrictEqual(parseProfile('---\nname: A\ninclude:\n  - "*.ts"\n  - 3\n---\n')?.include, ["*.ts"]);
     assert.strictEqual(parseProfile("\uFEFF---\nname: Saved with a BOM\n---\nBody")?.name, "Saved with a BOM");
     assert.strictEqual(parseProfile("# No frontmatter"), undefined);
@@ -64,11 +67,40 @@ suite("review profiles", () => {
   });
 
   test("matches files with the include globs, or every file without them", () => {
-    const p = (include: string[]) => ({ include });
+    const p = (include: string[], exclude: string[] = []) => ({ include, exclude });
     assert.strictEqual(appliesTo(p(["src/**/*.ts"]), "src/a/b.ts"), true);
     assert.strictEqual(appliesTo(p(["src/**/*.ts"]), "docs/b.ts"), false);
     assert.strictEqual(appliesTo(p(["**/*"]), ".github/workflows/ci.yml"), true);
     assert.strictEqual(appliesTo(p([]), "anything.md"), true);
+  });
+
+  test("never reviews the files of the exclude globs, even when include matches them", () => {
+    const p = (include: string[], exclude: string[]) => ({ include, exclude });
+    assert.strictEqual(appliesTo(p([], ["**/package-lock.json"]), "vscode/package-lock.json"), false);
+    assert.strictEqual(appliesTo(p([], ["**/package-lock.json"]), "package-lock.json"), false);
+    assert.strictEqual(appliesTo(p([], ["**/package-lock.json"]), "package.json"), true);
+    assert.strictEqual(appliesTo(p(["src/**"], ["**/*.min.js"]), "src/vendor/lib.min.js"), false);
+    assert.strictEqual(appliesTo(p(["src/**"], ["**/*.min.js"]), "src/app.js"), true);
+    assert.strictEqual(appliesTo(p(["src/**"], ["**/*.min.js"]), "docs/app.js"), false);
+  });
+
+  test("the bundled profiles leave minified files and snapshots out of the review, and lockfiles out of all but Security", async () => {
+    const profiles = (await readdir(bundledDir)).filter((name) => name.endsWith(".md"));
+    assert.deepStrictEqual(profiles.sort(), ["general.md", "performance.md", "security.md"]);
+    for (const name of profiles) {
+      const parsed = parseProfile(await readFile(join(bundledDir, name), "utf8"));
+      assert.ok(parsed, name);
+      for (const noise of ["dist/app.min.js", "src/__snapshots__/a.test.ts.snap"]) {
+        assert.strictEqual(appliesTo(parsed, noise), false, `${name}: ${noise}`);
+      }
+      // A lockfile change can point a dependency at another registry or package: Security reads it.
+      for (const lockfile of ["package-lock.json", "web/yarn.lock", "Cargo.lock", "go.sum"]) {
+        assert.strictEqual(appliesTo(parsed, lockfile), name === "security.md", `${name}: ${lockfile}`);
+      }
+      for (const code of ["src/app.ts", "package.json", "go.mod", ".github/workflows/ci.yml"]) {
+        assert.strictEqual(appliesTo(parsed, code), true, `${name}: ${code}`);
+      }
+    }
   });
 
   test("a pull request cannot change, add or remove the profiles that review it; local edits apply", async () => {

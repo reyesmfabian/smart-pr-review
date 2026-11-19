@@ -9,11 +9,17 @@ import { type ChatModel, promptsWithinLimit, runChat, runCli } from "./engines";
 import { appliesTo, type Profile } from "./profiles";
 import { buildPrompt, parseReviewOutput, placeFindings, type ReviewOutput } from "./review";
 
-export type Engine = { kind: "cli"; id: string; executable: string; args: readonly string[] } | { kind: "copilot"; id: "copilot"; model: ChatModel };
+export type Engine =
+  /** `model` is the one picked for this review (already in `args`); without it the CLI uses its own default. */
+  | { kind: "cli"; id: string; executable: string; args: readonly string[]; model?: string }
+  | { kind: "copilot"; id: "copilot"; model: ChatModel };
 
 /** How the engine is named in progress, summaries and comment footers. */
 export function engineLabel(engine: Engine): string {
-  return engine.kind === "copilot" ? `copilot (${engine.model.name})` : engine.id;
+  if (engine.kind === "copilot") {
+    return `copilot (${engine.model.name})`;
+  }
+  return engine.model ? `${engine.id} (${engine.model})` : engine.id;
 }
 
 /** Content git shows for a binary file: never sent to a model. */
@@ -45,10 +51,26 @@ export interface AiReviewResult {
 /**
  * Reviews the open pull request with each profile in parallel and turns the findings into drafts plus a
  * summary section per profile. CLI engines read a detached worktree of the head, removed at the end.
+ * The engines are stopped when the review is cancelled, and also when another pull request is opened or
+ * this one is refreshed: their findings would be discarded.
  */
-export async function runAiReview(o: AiReviewOptions): Promise<AiReviewResult> {
-  const c = o.session.require();
-  const root = o.session.repoRoot;
+export async function runAiReview(options: AiReviewOptions): Promise<AiReviewResult> {
+  const c = options.session.require();
+  const root = options.session.repoRoot;
+  const stop = new vscode.CancellationTokenSource();
+  const watchers = [
+    options.token.onCancellationRequested(() => stop.cancel()),
+    options.session.onDidChange(() => {
+      if (options.session.current !== c) {
+        stop.cancel();
+      }
+    }),
+  ];
+  if (options.token.isCancellationRequested) {
+    stop.cancel();
+  }
+  const o: AiReviewOptions = { ...options, token: stop.token };
+  const changed = vscode.l10n.t("The pull request changed during the review (another one was opened, or it was refreshed). Run the review again.");
   let worktree: string | undefined;
   try {
     if (o.engine.kind === "cli") {
@@ -67,7 +89,12 @@ export async function runAiReview(o: AiReviewOptions): Promise<AiReviewResult> {
       if (s.status === "fulfilled") {
         return s.value;
       }
-      if (!(s.reason instanceof vscode.CancellationError)) {
+      if (s.reason instanceof vscode.CancellationError) {
+        // Stopped because the pull request changed, not by the user: say so.
+        if (!options.token.isCancellationRequested) {
+          result.failures.push({ profile: o.profiles[i].name, error: changed });
+        }
+      } else {
         const error = s.reason instanceof Error ? s.reason.message : String(s.reason);
         const stderr = (s.reason as { stderr?: string })?.stderr?.trim();
         o.log.error(`${o.profiles[i].name} with ${engineLabel(o.engine)}: ${error}${stderr ? `\n${stderr}` : ""}`);
@@ -75,7 +102,7 @@ export async function runAiReview(o: AiReviewOptions): Promise<AiReviewResult> {
       }
       return undefined;
     });
-    if (settled.some((s) => s.status === "rejected" && s.reason instanceof vscode.CancellationError)) {
+    if (options.token.isCancellationRequested && settled.some((s) => s.status === "rejected" && s.reason instanceof vscode.CancellationError)) {
       throw new vscode.CancellationError();
     }
     for (const done of outputs) {
@@ -85,10 +112,7 @@ export async function runAiReview(o: AiReviewOptions): Promise<AiReviewResult> {
       }
       // Findings belong to the pull request (and head) that was reviewed, not to whatever is open now.
       if (o.session.current !== c) {
-        result.failures.push({
-          profile: done.profile.name,
-          error: vscode.l10n.t("The pull request changed during the review (another one was opened, or it was refreshed). Run the review again."),
-        });
+        result.failures.push({ profile: done.profile.name, error: changed });
         continue;
       }
       result.drafts += await applyOutput(o, done.profile, done.output);
@@ -96,6 +120,10 @@ export async function runAiReview(o: AiReviewOptions): Promise<AiReviewResult> {
     }
     return result;
   } finally {
+    for (const watcher of watchers) {
+      watcher.dispose();
+    }
+    stop.dispose();
     if (worktree) {
       await git.removeWorktree(root, worktree).catch((error) => o.log.warn(`Could not remove ${worktree}: ${String(error)}`));
     }

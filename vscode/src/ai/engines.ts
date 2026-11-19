@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { delimiter, extname, isAbsolute, join } from "node:path";
 import * as vscode from "vscode";
 
@@ -8,6 +9,45 @@ import * as vscode from "vscode";
 export interface CliEngineConfig {
   command: string;
   args?: string[];
+  /** The flag that selects the model (e.g. "--model"). With it, the review asks for a model and appends the flag and the model to `args`. */
+  modelArg?: string;
+  /** Models to offer. */
+  models?: string[];
+  /** Arguments that make the command print its models, one per line: "id" or "id - name". */
+  listModelsArgs?: string[];
+  /** The model offered first until another one is picked. */
+  defaultModel?: string;
+}
+
+/** A model of a CLI engine; the id is what the engine's model flag takes. */
+export interface CliModel {
+  id: string;
+  name?: string;
+}
+
+/** A model name is one argument of the engine: no spaces or control characters, and never an option. */
+export function isModelName(value: string): boolean {
+  return /^(?!-)[^\s\p{Cc}]{1,200}$/u.test(value);
+}
+
+/**
+ * Reads the models a CLI prints, one per line as "id" or "id - name" (what `cursor-agent models` prints).
+ * Other lines, like its heading, are ignored.
+ */
+export function parseModelList(output: string): CliModel[] {
+  const models = new Map<string, CliModel>();
+  for (const raw of output.split(/\r?\n/)) {
+    // Without colors, nor the zero-width characters some CLIs pad the names with.
+    const line = raw
+      .replace(/\p{Cc}\[[0-9;]*[A-Za-z]/gu, "")
+      .replace(/[\u200b-\u200d\ufeff]/g, "")
+      .trim();
+    const match = /^(\S+)(?:\s+-\s+(.+))?$/.exec(line);
+    if (match && isModelName(match[1]) && !models.has(match[1])) {
+      models.set(match[1], match[2] ? { id: match[1], name: match[2].replace(/\s+/g, " ").trim() } : { id: match[1] });
+    }
+  }
+  return [...models.values()];
 }
 
 /** The part of vscode.LanguageModelChat the Copilot engine uses (tests pass a fake). */
@@ -162,6 +202,11 @@ export function windowsCommandLine(
   });
   const line = [executable.replace(CMD_META, "^$1"), ...quoted].join(" ");
   return { command: shell, args: ["/d", "/s", "/c", `"${line}"`] };
+}
+
+/** The models `executable` lists with `args`. Runs outside the repository: listing needs none of it. */
+export async function listCliModels(executable: string, args: readonly string[], token: vscode.CancellationToken, timeoutMs: number): Promise<CliModel[]> {
+  return parseModelList(await runCli(executable, args, "", tmpdir(), token, timeoutMs));
 }
 
 /** GitHub Copilot's chat models: none when Copilot is missing or signed out, or when its provider fails. */

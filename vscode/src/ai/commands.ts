@@ -5,7 +5,7 @@ import * as vscode from "vscode";
 import type { ChangedFile } from "../git";
 import { aiLog } from "../log";
 import type { ReviewSession } from "../review/session";
-import { type ChatModel, type CliEngineConfig, copilotModels, findExecutable } from "./engines";
+import { type ChatModel, type CliEngineConfig, type CliModel, copilotModels, findExecutable, isModelName, listCliModels } from "./engines";
 import { appliesTo, loadProfiles, type Profile } from "./profiles";
 import { type Engine, engineLabel, runAiReview } from "./runReview";
 
@@ -100,7 +100,7 @@ export function describeFailures(failures: readonly { profile: string; error: st
 
 /** The AI review running: one at a time, so a second click cannot start another one unnoticed. */
 let busy = false;
-let running: { label: string; cancel: vscode.CancellationTokenSource } | undefined;
+let running: { label: string; cancel: vscode.CancellationTokenSource; done: Promise<void> } | undefined;
 const aiReviewChanged = new vscode.EventEmitter<void>();
 /** Fires when an AI review starts or ends. */
 export const onDidChangeAiReview = aiReviewChanged.event;
@@ -112,6 +112,16 @@ export function runningAiReview(): string | undefined {
 
 export function cancelAiReview(): void {
   running?.cancel.cancel();
+}
+
+/**
+ * Cancels the AI review running and waits until its engines have exited. For when VS Code closes or the
+ * extension is disabled: an engine left behind would go on spending on a review nobody reads.
+ */
+export async function stopAiReview(): Promise<void> {
+  const review = running;
+  review?.cancel.cancel();
+  await review?.done;
 }
 
 /** "Review with AI": pick profiles, pick an engine, review, then report. */
@@ -151,7 +161,8 @@ async function review(session: ReviewSession, extensionPath: string, storagePath
   }
   // Cancellable from the notification and from the review window, which has no notifications.
   const cancel = new vscode.CancellationTokenSource();
-  running = { label: engineLabel(engine), cancel };
+  let settle = () => {};
+  running = { label: engineLabel(engine), cancel, done: new Promise((resolve) => (settle = resolve)) };
   aiReviewChanged.fire();
   let result;
   try {
@@ -180,6 +191,7 @@ async function review(session: ReviewSession, extensionPath: string, storagePath
   } finally {
     running = undefined;
     cancel.dispose();
+    settle();
     aiReviewChanged.fire();
   }
   if (result.failures.length) {
@@ -237,16 +249,142 @@ function asEngines(value: unknown): Record<string, CliEngineConfig> {
   }
   const engines: Record<string, CliEngineConfig> = {};
   for (const [id, entry] of Object.entries(value)) {
-    const e = entry as { command?: unknown; args?: unknown };
-    if (
-      typeof e?.command === "string" &&
-      e.command &&
-      (e.args === undefined || (Array.isArray(e.args) && e.args.every((a) => typeof a === "string")))
-    ) {
-      engines[id] = { command: e.command, args: e.args as string[] | undefined };
+    const e = entry as { command?: unknown; args?: unknown; modelArg?: unknown; models?: unknown; listModelsArgs?: unknown; defaultModel?: unknown };
+    const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((a) => typeof a === "string");
+    if (typeof e?.command === "string" && e.command && (e.args === undefined || strings(e.args))) {
+      // The model fields are optional extras: a malformed one is left out, the engine still works.
+      engines[id] = {
+        command: e.command,
+        args: e.args as string[] | undefined,
+        ...(typeof e.modelArg === "string" && e.modelArg ? { modelArg: e.modelArg } : {}),
+        ...(strings(e.models) ? { models: e.models.filter(isModelName) } : {}),
+        ...(strings(e.listModelsArgs) && e.listModelsArgs.length ? { listModelsArgs: e.listModelsArgs } : {}),
+        ...(typeof e.defaultModel === "string" && isModelName(e.defaultModel) ? { defaultModel: e.defaultModel } : {}),
+      };
     }
   }
   return engines;
+}
+
+/** The model of a CLI engine picked last ("" for the CLI's own default), offered first next time. */
+const lastCliModelKey = (engineId: string) => `smartPrReview.cliModel.${engineId}`;
+
+/**
+ * What the model picker of a CLI engine offers, in order: the model picked last (the engine's default one
+ * until then), the CLI's own default (undefined), then the engine's models and the ones the CLI listed.
+ * `last` is "" when the CLI's own default was picked last.
+ */
+export function cliModelChoices(
+  engine: Pick<CliEngineConfig, "models" | "defaultModel">,
+  listed: readonly CliModel[],
+  last: string | undefined,
+): (CliModel | undefined)[] {
+  const known = new Map<string, CliModel>();
+  for (const model of [...(engine.models ?? []).map((id): CliModel => ({ id })), ...listed]) {
+    const seen = known.get(model.id);
+    if (isModelName(model.id) && (!seen || (!seen.name && model.name))) {
+      known.set(model.id, model);
+    }
+  }
+  const first = last ?? engine.defaultModel;
+  const preferred = first && isModelName(first) ? (known.get(first) ?? { id: first }) : undefined;
+  return [...(preferred ? [preferred] : []), undefined, ...[...known.values()].filter((m) => m.id !== preferred?.id)];
+}
+
+/** Seconds a CLI may take to list its models before the picker goes on without them. */
+const LIST_MODELS_TIMEOUT_MS = 20_000;
+
+interface ModelItem extends vscode.QuickPickItem {
+  /** A model, the CLI's own default (undefined) or "type another one". */
+  choice: { model: string | undefined } | "other";
+}
+
+/**
+ * Asks for the model of a CLI engine that declares its model flag. Returns the model, undefined in `model`
+ * for the CLI's own default, or undefined when the picker was dismissed. The picker opens at once and the
+ * models the CLI lists are added when they arrive.
+ */
+async function pickCliModel(
+  id: string,
+  engine: CliEngineConfig,
+  executable: string,
+  state: vscode.Memento,
+): Promise<{ model: string | undefined } | undefined> {
+  const key = lastCliModelKey(id);
+  const last = state.get<string>(key);
+  const items = (listed: readonly CliModel[]): ModelItem[] => [
+    ...cliModelChoices(engine, listed, last).map(
+      (model): ModelItem =>
+        model
+          ? { label: model.id, description: model.name, choice: { model: model.id } }
+          : {
+              label: vscode.l10n.t("Default model"),
+              description: vscode.l10n.t("the one {0} is set up to use", engine.command),
+              choice: { model: undefined },
+            },
+    ),
+    { label: vscode.l10n.t("Other…"), description: vscode.l10n.t("type a model name"), choice: "other" },
+  ];
+  const pick = vscode.window.createQuickPick<ModelItem>();
+  const listing = new vscode.CancellationTokenSource();
+  let choice: ModelItem["choice"] | undefined;
+  try {
+    pick.title = vscode.l10n.t("Review with AI");
+    pick.placeholder = vscode.l10n.t("Choose the model of {0}", id);
+    pick.matchOnDescription = true;
+    pick.items = items([]);
+    if (engine.listModelsArgs) {
+      pick.busy = true;
+      void listCliModels(executable, engine.listModelsArgs, listing.token, LIST_MODELS_TIMEOUT_MS)
+        .then(
+          (listed) => {
+            if (listing.token.isCancellationRequested) {
+              return;
+            }
+            // The same entry stays under the cursor when the list grows.
+            const active = pick.activeItems[0]?.label;
+            pick.keepScrollPosition = true;
+            pick.items = items(listed);
+            pick.activeItems = pick.items.filter((item) => item.label === active).slice(0, 1);
+          },
+          (error) => {
+            if (!(error instanceof vscode.CancellationError)) {
+              aiLog.warn(`Could not list the models of ${id}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          },
+        )
+        .then(() => {
+          if (!listing.token.isCancellationRequested) {
+            pick.busy = false;
+          }
+        });
+    }
+    choice = await new Promise<ModelItem["choice"] | undefined>((resolve) => {
+      pick.onDidAccept(() => resolve(pick.selectedItems[0]?.choice));
+      pick.onDidHide(() => resolve(undefined));
+      pick.show();
+    });
+  } finally {
+    listing.cancel();
+    listing.dispose();
+    pick.dispose();
+  }
+  if (choice === undefined) {
+    return undefined;
+  }
+  if (choice === "other") {
+    const typed = await vscode.window.showInputBox({
+      title: vscode.l10n.t("Review with AI"),
+      prompt: vscode.l10n.t("Model name, as {0} expects it after {1}", engine.command, engine.modelArg ?? ""),
+      validateInput: (value) => (isModelName(value.trim()) ? undefined : vscode.l10n.t("Enter a model name without spaces.")),
+    });
+    if (!typed?.trim()) {
+      return undefined;
+    }
+    choice = { model: typed.trim() };
+  }
+  await state.update(key, choice.model ?? "");
+  return choice;
 }
 
 async function pickEngine(config: vscode.WorkspaceConfiguration, state: vscode.Memento): Promise<Engine | undefined> {
@@ -288,7 +426,17 @@ async function pickEngine(config: vscode.WorkspaceConfiguration, state: vscode.M
       choice.id,
     );
   }
-  return { kind: "cli", id: choice.id, executable, args: engine.args ?? [] };
+  const args = engine.args ?? [];
+  if (!engine.modelArg) {
+    return { kind: "cli", id: choice.id, executable, args };
+  }
+  const picked = await pickCliModel(choice.id, engine, executable, state);
+  if (!picked) {
+    return undefined;
+  }
+  return picked.model === undefined
+    ? { kind: "cli", id: choice.id, executable, args }
+    : { kind: "cli", id: choice.id, executable, args: [...args, engine.modelArg, picked.model], model: picked.model };
 }
 
 async function pickCopilotModel(state: vscode.Memento): Promise<ChatModel | undefined> {
@@ -317,6 +465,11 @@ name: ${JSON.stringify(name)}
 description: What this profile looks for
 include:
   - "**/*"
+exclude:
+  - "**/package-lock.json"
+  - "**/*.lock"
+  - "**/*.min.js"
+  - "**/__snapshots__/**"
 ---
 Review the changes for <what this profile cares about>. For each problem, say what can go wrong and how to fix it.
 

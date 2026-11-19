@@ -12,7 +12,7 @@ import com.fabianreyes.smartprreview.SmartPrReviewBundle
 class ReviewTest : BasePlatformTestCase() {
     private fun assertContains(text: String, part: String) = assertTrue("missing <$part> in <$text>", text.contains(part))
 
-    private val profile = ProfileContent("Security", "", emptyList(), "Check every input.")
+    private val profile = ProfileContent("Security", "", emptyList(), emptyList(), "Check every input.")
 
     private fun finding(line: Int, endLine: Int = line, file: String = "src/app.ts", suggestion: String? = null, message: String = "Problem at $line") =
         Finding(file, line, endLine, Severity.ERROR, message, suggestion)

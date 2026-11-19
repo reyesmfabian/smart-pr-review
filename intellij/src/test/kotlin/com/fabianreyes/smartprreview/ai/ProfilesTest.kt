@@ -69,7 +69,7 @@ class ProfilesTest {
     @Test
     fun `parses the frontmatter and body`() {
         assertEquals(
-            ProfileContent("Security", "Inputs", listOf("src/**"), "Check inputs."),
+            ProfileContent("Security", "Inputs", listOf("src/**"), emptyList(), "Check inputs."),
             parseProfile("---\r\nname: Security\r\ndescription: Inputs\r\ninclude: \"src/**\"\r\n---\r\nCheck inputs.\r\n"),
         )
         assertEquals(listOf("*.ts"), parseProfile("---\nname: A\ninclude:\n  - \"*.ts\"\n  - 3\n---\n")?.include)
@@ -85,6 +85,44 @@ class ProfilesTest {
     }
 
     @Test
+    fun `exclude is read like include`() {
+        assertEquals(listOf("**/*.lock"), parseProfile("---\nname: A\nexclude:\n  - \"**/*.lock\"\n  - 3\n---\n")?.exclude)
+        assertEquals(listOf("dist/**"), parseProfile("---\nname: A\nexclude: \"dist/**\"\n---\n")?.exclude)
+        assertEquals(emptyList<String>(), parseProfile("---\nname: A\n---\n")?.exclude)
+    }
+
+    @Test
+    fun `never reviews the files of the exclude globs, even when include matches them`() {
+        val lock = listOf("**/package-lock.json")
+        assertFalse(appliesTo(emptyList(), lock, "vscode/package-lock.json"))
+        assertFalse(appliesTo(emptyList(), lock, "package-lock.json"))
+        assertTrue(appliesTo(emptyList(), lock, "package.json"))
+        assertFalse(appliesTo(listOf("src/**"), listOf("**/*.min.js"), "src/vendor/lib.min.js"))
+        assertTrue(appliesTo(listOf("src/**"), listOf("**/*.min.js"), "src/app.js"))
+        assertFalse(appliesTo(listOf("src/**"), listOf("**/*.min.js"), "docs/app.js"))
+    }
+
+    @Test
+    fun `the bundled profiles leave minified files and snapshots out of the review, and lockfiles out of all but Security`() {
+        val lockfiles = listOf("package-lock.json", "web/yarn.lock", "Cargo.lock", "go.sum")
+        val profiles = bundledProfiles()
+        assertEquals(setOf("general.md", "performance.md", "security.md"), profiles.keys)
+        for ((file, text) in profiles) {
+            val p = parseProfile(text)!!
+            for (noise in listOf("dist/app.min.js", "src/__snapshots__/a.test.ts.snap")) {
+                assertFalse("$file: $noise", appliesTo(p.include, p.exclude, noise))
+            }
+            // A lockfile change can point a dependency at another registry or package: Security reads it.
+            for (lockfile in lockfiles) {
+                assertEquals("$file: $lockfile", file == "security.md", appliesTo(p.include, p.exclude, lockfile))
+            }
+            for (code in listOf("src/app.ts", "package.json", "go.mod", ".github/workflows/ci.yml")) {
+                assertTrue("$file: $code", appliesTo(p.include, p.exclude, code))
+            }
+        }
+    }
+
+    @Test
     fun `globs follow minimatch with dot`() {
         assertTrue(globToRegex("**/*.ts").matches("a.ts"))
         assertTrue(globToRegex("**/*.ts").matches("src/a.ts"))
@@ -97,8 +135,8 @@ class ProfilesTest {
         assertTrue(globToRegex("a?.kt").matches("ab.kt"))
         assertFalse(globToRegex("a?.kt").matches("a/.kt"))
         assertFalse(globToRegex("src/**/*.ts").matches("docs/b.ts"))
-        assertTrue(appliesTo(emptyList(), "anything.md"))
-        assertTrue(appliesTo(listOf("src/**/*.ts"), "src/a/b.ts"))
+        assertTrue(appliesTo(emptyList(), emptyList(), "anything.md"))
+        assertTrue(appliesTo(listOf("src/**/*.ts"), emptyList(), "src/a/b.ts"))
     }
 
     @Test

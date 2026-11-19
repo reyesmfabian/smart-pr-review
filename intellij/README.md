@@ -34,6 +34,8 @@ SDK and dependencies are downloaded by Gradle on the first build.
 
 Bundled review profiles come from [`../profiles/`](../profiles/), copied into
 the plugin by Gradle. Edit the originals there, not `build/`.
+To write your own, see the [profile guide](../docs/review-profiles.md), or give an AI agent
+[these instructions](../docs/review-profile-agent-instructions.md).
 The repository-wide [MIT license](../LICENSE) applies to both plugins.
 See the [IntelliJ changelog](CHANGELOG.md) for version history.
 See the [privacy notice](PRIVACY.md) for repository requests, local storage and optional AI processing.

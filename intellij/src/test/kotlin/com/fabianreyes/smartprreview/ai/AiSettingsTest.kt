@@ -7,13 +7,18 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Locale
+import com.fabianreyes.smartprreview.settings.Engine as EngineSettings
 
 class AiSettingsTest {
     private val default = ".smart-review/profiles"
 
     @Test
     fun `round-trips the profile template even with quotes in the name`() {
-        assertEquals("Mi \"perfil\": API", parseProfile(profileTemplate("Mi \"perfil\": API"))?.name)
+        val template = parseProfile(profileTemplate("Mi \"perfil\": API"))!!
+        assertEquals("Mi \"perfil\": API", template.name)
+        assertEquals(listOf("**/*"), template.include)
+        // The template shows how to keep generated files out of the review.
+        assertTrue("**/package-lock.json" in template.exclude)
     }
 
     @Test
@@ -35,6 +40,39 @@ class AiSettingsTest {
             assertEquals(default, repositorySafe("x", listOf(ChangedFile(ChangedFile.Status.M, path)), default))
             assertEquals(default, repositorySafe("x", listOf(ChangedFile(ChangedFile.Status.R, "a.txt", oldPath = path)), default))
         }
+    }
+
+    @Test
+    fun `offers the model picked last first, then the CLI's own default, then the engine's and the listed models`() {
+        fun ids(choices: List<CliModel?>) = choices.map { it?.id ?: "<default>" }
+        val claude = EngineSettings("claude", models = listOf("sonnet", "opus", "--dangerous"))
+        assertEquals(listOf("<default>", "sonnet", "opus"), ids(cliModelChoices(claude, emptyList(), null)))
+        assertEquals(listOf("opus", "<default>", "sonnet"), ids(cliModelChoices(claude, emptyList(), "opus")))
+        // "-" is what picking the CLI's own default is remembered as.
+        assertEquals(listOf("<default>", "sonnet", "opus"), ids(cliModelChoices(claude, emptyList(), "-")))
+        // One typed by hand is remembered even though no list has it.
+        assertEquals(listOf("claude-custom-1", "<default>", "sonnet", "opus"), ids(cliModelChoices(claude, emptyList(), "claude-custom-1")))
+        val cursor = EngineSettings("cursor-agent", defaultModel = "auto")
+        val listed = listOf(CliModel("auto", "Auto (default)"), CliModel("gpt-5.2", "GPT-5.2"))
+        // Until one is picked, the engine's default model comes first: Cursor keeps reviewing with "auto".
+        assertEquals(listOf(listed[0], null, listed[1]), cliModelChoices(cursor, listed, null))
+        assertEquals(listOf("auto", "<default>"), ids(cliModelChoices(cursor, emptyList(), null)))
+        assertEquals(listOf("gpt-5.2", "<default>", "auto"), ids(cliModelChoices(cursor, listed, "gpt-5.2")))
+        assertEquals(listOf("<default>", "auto", "gpt-5.2"), ids(cliModelChoices(cursor, listed, "-")))
+        // A name from the list wins over the bare id of the setting, and nothing is offered twice.
+        assertEquals(listOf(null, listed[0], listed[1]), cliModelChoices(EngineSettings("x", models = listOf("auto")), listed, "-"))
+    }
+
+    @Test
+    fun `appends the model picked to the arguments of the engine, after its model flag`() {
+        val path = java.nio.file.Path.of("/usr/bin/agent")
+        val choice = EngineChoice("mine", EngineSettings("agent", listOf("-p"), modelArg = "--model"), path)
+        assertEquals(Engine("mine", path.toString(), listOf("-p", "--model", "large"), "large"), choice.toEngine("large"))
+        // The CLI's own default: nothing is added.
+        assertEquals(Engine("mine", path.toString(), listOf("-p")), choice.toEngine(null))
+        // An engine without a model flag never gets one.
+        assertEquals(Engine("plain", path.toString(), listOf("-p")), EngineChoice("plain", EngineSettings("agent", listOf("-p")), path).toEngine("large"))
+        assertNull(EngineChoice("missing", EngineSettings("agent"), null).toEngine("large"))
     }
 
     @Test

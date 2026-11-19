@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0 — 2026-11-18
+
+### Added
+- Review profiles accept `exclude` globs: the files they match are not sent to the engine. The bundled profiles exclude minified files, source maps and test snapshots (and lockfiles, except *Security*), and **Create Review Profile** writes an `exclude` example.
+- Claude Code, Codex and Cursor ask for the model on every review (the last one first; Cursor lists the models of your account). The model picked is named next to the engine in progress, the summary and comment labels. Engines you add get the same picker with `modelArg`, `models`, `listModelsArgs` and `defaultModel`.
+
+### Changed
+- The bundled *General* and *Performance* profiles no longer review lockfiles; *Security* still does, since a lockfile change can point a dependency at another registry or package. Profiles in your repository are unaffected.
+- Codex reviews run with medium reasoning effort instead of inheriting the effort of your Codex configuration.
+- Cursor no longer has `--model auto` fixed in its arguments: *auto* is the first model offered instead.
+- If you redefine `claude`, `codex` or `cursor` in your engine settings, your definition is used as is: no model picker and no fixed reasoning effort unless you add them.
+
+### Fixed
+- Stop the engines of an AI review when another pull request is opened, the open one is refreshed or VS Code closes; they used to keep running to an answer that was then discarded.
+
 ## 0.1.1 — 2026-10-25
 
 ### Fixed

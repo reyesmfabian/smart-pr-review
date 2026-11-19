@@ -15,8 +15,41 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
 
-/** A CLI engine to run (not the stored setting, `settings.Engine`). */
-data class Engine(val id: String, val executable: String, val args: List<String>)
+/**
+ * A CLI engine to run (not the stored setting, `settings.Engine`). [model] is the one picked for this review
+ * (already in [args]); without it the CLI uses its own default.
+ */
+data class Engine(val id: String, val executable: String, val args: List<String>, val model: String? = null)
+
+/** A model of a CLI engine; the id is what the engine's model flag takes. */
+data class CliModel(val id: String, val name: String? = null)
+
+private val MODEL_NAME = Regex("""(?!-)[^\s\p{Z}\p{Cc}]{1,200}""")
+
+/** A model name is one argument of the engine: no spaces or control characters, and never an option. */
+fun isModelName(value: String): Boolean = MODEL_NAME.matches(value)
+
+private val ANSI_COLOR = Regex("""\p{Cc}\[[0-9;]*[A-Za-z]""")
+private val ZERO_WIDTH = Regex("[\u200b-\u200d\ufeff]")
+private val MODEL_LINE = Regex("""(\S+)(?:\s+-\s+(.+))?""")
+private val SPACES = Regex("""\s+""")
+
+/**
+ * Reads the models a CLI prints, one per line as "id" or "id - name" (what `cursor-agent models` prints).
+ * Other lines, like its heading, are ignored.
+ */
+fun parseModelList(output: String): List<CliModel> {
+    val models = linkedMapOf<String, CliModel>()
+    for (raw in output.lines()) {
+        // Without colors, nor the zero-width characters some CLIs pad the names with.
+        val line = raw.replace(ANSI_COLOR, "").replace(ZERO_WIDTH, "").trim()
+        val match = MODEL_LINE.matchEntire(line) ?: continue
+        val id = match.groupValues[1]
+        if (!isModelName(id) || id in models) continue
+        models[id] = CliModel(id, match.groupValues[2].replace(SPACES, " ").trim().ifEmpty { null })
+    }
+    return models.values.toList()
+}
 
 class EngineException(message: String, val stderr: String = "") : RuntimeException(message)
 
@@ -76,6 +109,8 @@ fun runCli(
     engine: Engine, prompt: String, cwd: Path, indicator: ProgressIndicator?, timeoutMs: Long,
     /** The shell's environment (a GUI-launched IDE has launchd's minimal PATH, and `#!/usr/bin/env node` CLIs need the real one). */
     env: Map<String, String> = EnvironmentUtil.getEnvironmentMap(),
+    /** Polled while the engine runs: true stops it like a cancellation (its answer is no longer wanted). */
+    stop: () -> Boolean = { false },
 ): String {
     // IntelliJ handles Windows shell shims, native quoting and metacharacters together.
     val command = CommandLineUtil.toCommandLine(engine.executable, engine.args)
@@ -150,7 +185,7 @@ fun runCli(
     try {
         while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
             failure = when {
-                indicator?.isCanceled == true -> EngineCancelled()
+                indicator?.isCanceled == true || stop() -> EngineCancelled()
                 tooLarge.get() -> tooLargeError()
                 System.nanoTime() >= deadline -> EngineException(SmartPrReviewBundle.message("ai.timeout", timeoutMs / 60000.0))
                 else -> null
@@ -186,3 +221,7 @@ fun runCli(
     }
     return stdout.toString(StandardCharsets.UTF_8)
 }
+
+/** The models `executable` lists with `args`. Runs outside the repository: listing needs none of it. Blocking. */
+fun listCliModels(executable: String, args: List<String>, indicator: ProgressIndicator?, timeoutMs: Long): List<CliModel> =
+    parseModelList(runCli(Engine("models", executable, args), "", Paths.get(System.getProperty("java.io.tmpdir")), indicator, timeoutMs))

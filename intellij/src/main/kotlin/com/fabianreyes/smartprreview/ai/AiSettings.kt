@@ -61,6 +61,11 @@ name: ${gson.toJson(name)}
 description: What this profile looks for
 include:
   - "**/*"
+exclude:
+  - "**/package-lock.json"
+  - "**/*.lock"
+  - "**/*.min.js"
+  - "**/__snapshots__/**"
 ---
 Review the changes for <what this profile cares about>. For each problem, say what can go wrong and how to fix it.
 

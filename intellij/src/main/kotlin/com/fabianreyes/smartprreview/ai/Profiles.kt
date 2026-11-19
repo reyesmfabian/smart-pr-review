@@ -14,6 +14,8 @@ data class Profile(
     val description: String,
     /** Globs of repository paths the profile reviews; empty means every file. */
     val include: List<String>,
+    /** Globs of repository paths the profile never reviews, even when `include` matches them: they are not sent to the engine. */
+    val exclude: List<String>,
     /** Review instructions: the Markdown after the frontmatter. */
     val body: String,
     val source: Source,
@@ -23,7 +25,7 @@ data class Profile(
     enum class Source { REPOSITORY, BUNDLED }
 }
 
-data class ProfileContent(val name: String, val description: String, val include: List<String>, val body: String)
+data class ProfileContent(val name: String, val description: String, val include: List<String>, val exclude: List<String>, val body: String)
 
 // Editors on Windows may save a byte order mark.
 private val FRONTMATTER = Regex("""^﻿?---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n([\s\S]*))?\z""")
@@ -37,12 +39,12 @@ fun parseProfile(text: String): ProfileContent? {
         return null
     } as? Map<*, *> ?: return null
     val name = (data["name"] as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    val include = when (val i = data["include"]) {
-        is String -> listOf(i)
-        is List<*> -> i.filterIsInstance<String>()
+    fun globs(key: String): List<String> = when (val value = data[key]) {
+        is String -> listOf(value)
+        is List<*> -> value.filterIsInstance<String>()
         else -> emptyList()
     }
-    return ProfileContent(name, (data["description"] as? String)?.trim() ?: "", include, match.groupValues[2].trim())
+    return ProfileContent(name, (data["description"] as? String)?.trim() ?: "", globs("include"), globs("exclude"), match.groupValues[2].trim())
 }
 
 /** minimatch semantics with dot:true: `**` matches zero or more segments, `*`/`?` never cross `/`, `{a,b}` alternation. */
@@ -69,7 +71,11 @@ fun globToRegex(glob: String): Regex {
     return Regex(out.toString())
 }
 
-fun appliesTo(include: List<String>, path: String): Boolean = include.isEmpty() || include.any { globToRegex(it).matches(path) }
+/** Whether a profile reviews `path`: `include` (every file when empty) minus `exclude`. */
+fun appliesTo(include: List<String>, exclude: List<String>, path: String): Boolean {
+    fun matches(globs: List<String>) = globs.any { globToRegex(it).matches(path) }
+    return (include.isEmpty() || matches(include)) && !matches(exclude)
+}
 
 data class ProfileSources(
     val git: Git,
@@ -94,7 +100,7 @@ fun loadProfiles(s: ProfileSources): List<Profile> {
     val names = repository.map { it.name }.toSet()
     val extra = s.bundled().entries.sortedBy { it.key }.mapNotNull { parseProfile(it.value) }
         .filter { it.name !in names }
-        .map { Profile(it.name, it.description, it.include, it.body, Profile.Source.BUNDLED, local = false) }
+        .map { Profile(it.name, it.description, it.include, it.exclude, it.body, Profile.Source.BUNDLED, local = false) }
     return repository + extra
 }
 
@@ -128,7 +134,7 @@ private fun repositoryProfiles(s: ProfileSources): List<Profile> {
             try { Files.readAllBytes(workingFile).toString(Charsets.UTF_8) } catch (e: IOException) { return@mapNotNull null }
         }
         val parsed = text?.let(::parseProfile) ?: return@mapNotNull null
-        Profile(parsed.name, parsed.description, parsed.include, parsed.body, Profile.Source.REPOSITORY, local = text != base)
+        Profile(parsed.name, parsed.description, parsed.include, parsed.exclude, parsed.body, Profile.Source.REPOSITORY, local = text != base)
     }
 }
 

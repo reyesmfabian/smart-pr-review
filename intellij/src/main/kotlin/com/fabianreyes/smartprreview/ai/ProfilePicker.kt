@@ -14,7 +14,7 @@ import javax.swing.JPanel
 
 /** Checkbox per profile; the ones that apply to a changed file come checked. */
 class ProfilePicker(project: Project, private val profiles: List<Profile>, changedPaths: List<String>) : DialogWrapper(project) {
-    private val applies = profiles.map { p -> changedPaths.any { appliesTo(p.include, it) } }
+    private val applies = profiles.map { p -> changedPaths.any { appliesTo(p.include, p.exclude, it) } }
     private val boxes = profiles.mapIndexed { i, p ->
         val origin = when {
             p.source == Profile.Source.BUNDLED -> message("ai.bundled")

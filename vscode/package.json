@@ -2,7 +2,7 @@
   "name": "smart-pr-review",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "fabianreyes",
   "icon": "images/icon.png",
   "license": "MIT",
@@ -75,6 +75,13 @@
                 "--no-session-persistence",
                 "--output-format",
                 "text"
+              ],
+              "modelArg": "--model",
+              "models": [
+                "sonnet",
+                "opus",
+                "haiku",
+                "fable"
               ]
             },
             "codex": {
@@ -85,12 +92,15 @@
                 "read-only",
                 "-c",
                 "approval_policy=\"never\"",
+                "-c",
+                "model_reasoning_effort=\"medium\"",
                 "--skip-git-repo-check",
                 "--ephemeral",
                 "--color",
                 "never",
                 "-"
-              ]
+              ],
+              "modelArg": "-m"
             },
             "cursor": {
               "command": "cursor-agent",
@@ -101,11 +111,14 @@
                 "--sandbox",
                 "enabled",
                 "--trust",
-                "--model",
-                "auto",
                 "--output-format",
                 "text"
-              ]
+              ],
+              "modelArg": "--model",
+              "listModelsArgs": [
+                "models"
+              ],
+              "defaultModel": "auto"
             }
           },
           "additionalProperties": {
@@ -119,6 +132,28 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "modelArg": {
+                "type": "string",
+                "markdownDescription": "%config.engines.modelArg%"
+              },
+              "models": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "markdownDescription": "%config.engines.models%"
+              },
+              "listModelsArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "markdownDescription": "%config.engines.listModelsArgs%"
+              },
+              "defaultModel": {
+                "type": "string",
+                "markdownDescription": "%config.engines.defaultModel%"
               }
             },
             "required": [

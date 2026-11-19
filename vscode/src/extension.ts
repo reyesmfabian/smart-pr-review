@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { createProfile, reviewWithAi } from "./ai/commands";
+import { createProfile, reviewWithAi, stopAiReview } from "./ai/commands";
 import { cleanupWorktrees } from "./ai/runReview";
 import { type Auth, AzureDevOpsAuth, githubAuth, httpConsent, recoveryActions } from "./auth";
 import type { ChangedFile } from "./git";
@@ -178,7 +178,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await updateState();
 }
 
-export function deactivate(): void {}
+/** An AI review still running would outlive the window: its engines are stopped first. */
+export function deactivate(): Promise<void> {
+  return stopAiReview();
+}
 
 /** The first workspace folder whose remote is supported; else a git repository with an unsupported remote. */
 async function findRepository(): Promise<{ root: string; remoteName: string; remote: RemoteInfo | undefined } | undefined> {

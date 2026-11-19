@@ -21,8 +21,8 @@ const ANSWER = JSON.stringify({
   ],
 });
 
-function profile(name: string, include: string[] = []): Profile {
-  return { name, description: "", include, body: "Look for bugs.", source: "repository", local: false };
+function profile(name: string, include: string[] = [], exclude: string[] = []): Profile {
+  return { name, description: "", include, exclude, body: "Look for bugs.", source: "repository", local: false };
 }
 
 suite("runAiReview", () => {
@@ -47,7 +47,7 @@ suite("runAiReview", () => {
   });
 
   /** A CLI engine that answers `answer` and appends its working folder to the summary. */
-  async function cliEngine(answer: string): Promise<Engine> {
+  async function cliEngine(answer: string): Promise<Extract<Engine, { kind: "cli" }>> {
     const path = join(storage, "engine.js");
     await writeFile(
       path,
@@ -248,6 +248,38 @@ suite("runAiReview", () => {
     assert.match(result.failures[0]?.error ?? "", /changed during the review/);
     assert.deepStrictEqual(session.require().drafts.all(), []);
     assert.strictEqual(session.require().drafts.summary(), "");
+  });
+
+  test("stops the engines when another pull request is opened: their findings would be discarded", async () => {
+    const forever = join(storage, "forever.js");
+    await writeFile(forever, "process.stdin.resume(); setTimeout(() => {}, 60_000);");
+    const started = Date.now();
+    const review = runAiReview(options({ kind: "cli", id: "slow", executable: node, args: [forever] }, [profile("A"), profile("B")]));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await session.open(1);
+    const result = await review;
+    // Not the 60 s the engine would run, nor the 20 s timeout.
+    assert.ok(Date.now() - started < 10_000);
+    assert.deepStrictEqual(result.failures.map((f) => f.profile).sort(), ["A", "B"]);
+    assert.match(result.failures[0].error, /changed during the review/);
+    assert.strictEqual(result.drafts, 0);
+    assert.deepStrictEqual(await readdir(join(storage, "worktrees")), []);
+  });
+
+  test("files a profile excludes are not sent to the engine", async () => {
+    const fake = fakeModel(JSON.stringify({ summary: "", findings: [] }));
+    await runAiReview(options({ kind: "copilot", id: "copilot", model: fake.model }, [profile("Code", [], ["**/new file.ts", "docs/**"])]));
+    assert.strictEqual(fake.prompts.length, 1);
+    assert.match(fake.prompts[0], /## Files to review\n\n- src\/app\.ts\n\n## Diff/);
+    assert.match(fake.prompts[0], /\+5\| changed line 5/);
+    assert.doesNotMatch(fake.prompts[0], /new file\.ts|new name\.md|export const added/);
+  });
+
+  test("names the model picked for a CLI engine in the comments and the summary", async () => {
+    const engine = await cliEngine(ANSWER);
+    await runAiReview(options({ ...engine, model: "sonnet" }, [profile("Security", ["src/**"])]));
+    assert.deepStrictEqual(session.require().drafts.all()[0].origin, { profile: "Security", engine: "fake (sonnet)", severity: "error" });
+    assert.match(session.require().drafts.summary(), /^### Security \(fake \(sonnet\)\)/);
   });
 
   test("a cancelled review leaves no engine running and no worktree behind", async () => {

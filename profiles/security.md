@@ -1,6 +1,13 @@
 ---
 name: Security
 description: Injection, secrets, input validation, access control
+exclude:
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/*.js.map"
+  - "**/*.css.map"
+  - "**/__snapshots__/**"
+  - "**/*.snap"
 ---
 Review the changes for security problems. For each one, say how it could be exploited.
 

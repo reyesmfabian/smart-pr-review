@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict";
 import { buildPrompt, type Finding, numberDiff, parseReviewOutput, placeFindings } from "../ai/review";
 
-const profile = { name: "Security", description: "", include: [], body: "Check every input." };
+const profile = { name: "Security", description: "", include: [], exclude: [], body: "Check every input." };
 
 function finding(line: number, endLine = line, extra: Partial<Finding> = {}): Finding {
   return { file: "src/app.ts", line, endLine, severity: "error", message: `Problem at ${line}`, ...extra };

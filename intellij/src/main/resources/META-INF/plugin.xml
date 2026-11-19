@@ -18,6 +18,7 @@
     Review worktrees are only removed after checking for local files and additional commit history.</p>
   ]]></description>
   <change-notes><![CDATA[
+    <p>0.2.0: Review profiles accept <code>exclude</code> globs, and the bundled ones leave minified files, source maps, snapshots and (except Security) lockfiles out of the review. Claude Code, Codex and Cursor ask for the model on every review. Codex runs with medium reasoning effort. AI reviews stop when another pull request is opened, the open one is refreshed, or the project or the IDE closes.</p>
     <p>0.1.2: With Label AI-generated comments off, AI reviews no longer add the profile and engine heading to the review summary.</p>
     <p>0.1.1: Fixed Windows review worktree creation and cleanup by preserving JSON arguments and normalizing native paths. Fixed Windows CLI shim argument escaping.</p>
     <p>Initial release for the IntelliJ Platform.</p>

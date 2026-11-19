@@ -10,6 +10,8 @@ export interface Profile {
   description: string;
   /** Globs of repository paths the profile reviews; empty means every file. */
   include: string[];
+  /** Globs of repository paths the profile never reviews, even when `include` matches them: they are not sent to the engine. */
+  exclude: string[];
   /** Review instructions: the Markdown after the frontmatter. */
   body: string;
   source: "repository" | "bundled";
@@ -17,7 +19,7 @@ export interface Profile {
   local: boolean;
 }
 
-export type ProfileContent = Pick<Profile, "name" | "description" | "include" | "body">;
+export type ProfileContent = Pick<Profile, "name" | "description" | "include" | "exclude" | "body">;
 
 /** Reads "---\n<yaml>\n---\n<body>". Undefined when there is no frontmatter or no name. */
 export function parseProfile(text: string): ProfileContent | undefined {
@@ -35,16 +37,25 @@ export function parseProfile(text: string): ProfileContent | undefined {
   if (typeof data !== "object" || data === null) {
     return undefined;
   }
-  const { name, description, include } = data as Record<string, unknown>;
+  const { name, description, include, exclude } = data as Record<string, unknown>;
   if (typeof name !== "string" || !name.trim()) {
     return undefined;
   }
-  const globs = typeof include === "string" ? [include] : Array.isArray(include) ? include.filter((g): g is string => typeof g === "string") : [];
-  return { name: name.trim(), description: typeof description === "string" ? description.trim() : "", include: globs, body: (match[2] ?? "").trim() };
+  const globs = (value: unknown) =>
+    typeof value === "string" ? [value] : Array.isArray(value) ? value.filter((g): g is string => typeof g === "string") : [];
+  return {
+    name: name.trim(),
+    description: typeof description === "string" ? description.trim() : "",
+    include: globs(include),
+    exclude: globs(exclude),
+    body: (match[2] ?? "").trim(),
+  };
 }
 
-export function appliesTo(profile: Pick<Profile, "include">, path: string): boolean {
-  return profile.include.length === 0 || profile.include.some((glob) => minimatch(path, glob, { dot: true }));
+/** Whether the profile reviews `path`: `include` (every file when empty) minus `exclude`. */
+export function appliesTo(profile: Pick<Profile, "include" | "exclude">, path: string): boolean {
+  const matches = (globs: readonly string[]) => globs.some((glob) => minimatch(path, glob, { dot: true }));
+  return (profile.include.length === 0 || matches(profile.include)) && !matches(profile.exclude);
 }
 
 export interface ProfileSources {

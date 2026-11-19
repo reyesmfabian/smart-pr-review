@@ -179,4 +179,23 @@ suite("manifest", () => {
     assert.ok(engines.codex.args.join(" ").includes('--sandbox read-only -c approval_policy="never"'));
     assert.ok(engines.cursor.args.join(" ").includes("--mode ask --sandbox enabled"));
   });
+
+  test("ships engine templates that ask for the model instead of inheriting or pinning one", async () => {
+    const manifest = JSON.parse(await readFile(join(__dirname, "../../package.json"), "utf8"));
+    const engines = manifest.contributes.configuration.properties["smartPrReview.engines"].default;
+    assert.strictEqual(engines.claude.modelArg, "--model");
+    assert.strictEqual(engines.cursor.modelArg, "--model");
+    assert.strictEqual(engines.codex.modelArg, "-m");
+    // The picker appends the flag: a pinned one in args would be given twice.
+    for (const [id, engine] of Object.entries<{ args: string[]; modelArg: string }>(engines)) {
+      assert.ok(!engine.args.includes(engine.modelArg), `${id} pins a model in args`);
+    }
+    // Cursor reviewed with "auto" before the picker: it stays the first offer.
+    assert.strictEqual(engines.cursor.defaultModel, "auto");
+    assert.deepStrictEqual(engines.cursor.listModelsArgs, ["models"]);
+    // Codex would otherwise inherit the reasoning effort of the user's own config (often the highest).
+    assert.ok(engines.codex.args.join(" ").includes('-c model_reasoning_effort="medium"'));
+    // codex reads the prompt from stdin because of the "-": it stays the last argument of the template.
+    assert.strictEqual(engines.codex.args.at(-1), "-");
+  });
 });

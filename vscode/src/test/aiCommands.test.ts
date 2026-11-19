@@ -6,6 +6,7 @@ import {
   aiLanguage,
   aiTimeoutMs,
   cliEngines,
+  cliModelChoices,
   describeFailures,
   installGuide,
   orderModels,
@@ -53,8 +54,47 @@ suite("AI commands", () => {
     });
   });
 
+  test("reads the model options of an engine, leaving out the malformed ones without losing the engine", () => {
+    const engines = cliEngines({
+      defaultValue: {
+        cursor: { command: "cursor-agent", args: ["-p"], modelArg: "--model", listModelsArgs: ["models"], defaultModel: "auto" },
+        claude: { command: "claude", modelArg: "--model", models: ["sonnet", "--dangerous", "two words", "opus"] },
+      },
+      globalValue: { mine: { command: "mine", modelArg: 3, models: "x", listModelsArgs: [], defaultModel: "-x" } },
+    });
+    assert.deepStrictEqual(engines, {
+      cursor: { command: "cursor-agent", args: ["-p"], modelArg: "--model", listModelsArgs: ["models"], defaultModel: "auto" },
+      claude: { command: "claude", args: undefined, modelArg: "--model", models: ["sonnet", "opus"] },
+      mine: { command: "mine", args: undefined },
+    });
+  });
+
+  test("offers the model picked last first, then the CLI's own default, then the engine's and the listed models", () => {
+    const ids = (choices: ReturnType<typeof cliModelChoices>) => choices.map((m) => m?.id ?? "<default>");
+    const claude = { models: ["sonnet", "opus"] };
+    assert.deepStrictEqual(ids(cliModelChoices(claude, [], undefined)), ["<default>", "sonnet", "opus"]);
+    assert.deepStrictEqual(ids(cliModelChoices(claude, [], "opus")), ["opus", "<default>", "sonnet"]);
+    // "" remembers that the CLI's own default was picked.
+    assert.deepStrictEqual(ids(cliModelChoices(claude, [], "")), ["<default>", "sonnet", "opus"]);
+    // One typed by hand is remembered even though no list has it.
+    assert.deepStrictEqual(ids(cliModelChoices(claude, [], "claude-custom-1")), ["claude-custom-1", "<default>", "sonnet", "opus"]);
+    const cursor = { defaultModel: "auto" };
+    const listed = [{ id: "auto", name: "Auto (default)" }, { id: "gpt-5.2", name: "GPT-5.2" }];
+    // Until one is picked, the engine's default model comes first: Cursor keeps reviewing with "auto".
+    assert.deepStrictEqual(cliModelChoices(cursor, listed, undefined), [listed[0], undefined, listed[1]]);
+    assert.deepStrictEqual(ids(cliModelChoices(cursor, [], undefined)), ["auto", "<default>"]);
+    assert.deepStrictEqual(ids(cliModelChoices(cursor, listed, "gpt-5.2")), ["gpt-5.2", "<default>", "auto"]);
+    assert.deepStrictEqual(ids(cliModelChoices(cursor, listed, "")), ["<default>", "auto", "gpt-5.2"]);
+    // A name from the list wins over the bare id of the setting, and nothing is offered twice.
+    assert.deepStrictEqual(cliModelChoices({ models: ["auto"] }, listed, ""), [undefined, listed[0], listed[1]]);
+  });
+
   test('round-trips the template of "Create Review Profile", even with quotes in the name', () => {
-    assert.strictEqual(parseProfile(profileTemplate('Mi "perfil": API'))?.name, 'Mi "perfil": API');
+    const template = parseProfile(profileTemplate('Mi "perfil": API'));
+    assert.strictEqual(template?.name, 'Mi "perfil": API');
+    assert.deepStrictEqual(template?.include, ["**/*"]);
+    // The template shows how to keep generated files out of the review.
+    assert.ok(template?.exclude.includes("**/package-lock.json"));
   });
 
   test("labels AI drafts with their profile and severity", () => {

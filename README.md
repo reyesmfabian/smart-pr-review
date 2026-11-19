@@ -9,6 +9,7 @@ Review GitHub and Azure DevOps pull requests in **VS Code** and **IntelliJ IDEA 
 | [`vscode/`](vscode/) | VS Code extension: TypeScript, tests, assets and Marketplace documentation |
 | [`intellij/`](intellij/) | IntelliJ Platform plugin: Kotlin, tests and Gradle build |
 | [`profiles/`](profiles/) | Bundled AI review profiles shared by both plugins |
+| [`docs/`](docs/) | [Writing review profiles](docs/review-profiles.md) and [instructions for AI agents](docs/review-profile-agent-instructions.md) |
 | [`.github/`](.github/) | CI and release workflows |
 
 The two plugins have independent versions and build tools. There is no root npm package.

@@ -4,7 +4,17 @@ import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { type ChatModel, findExecutable, promptsWithinLimit, runChat, runCli, windowsCommandLine } from "../ai/engines";
+import {
+  type ChatModel,
+  findExecutable,
+  isModelName,
+  listCliModels,
+  parseModelList,
+  promptsWithinLimit,
+  runChat,
+  runCli,
+  windowsCommandLine,
+} from "../ai/engines";
 import { fakeModel } from "./fakes";
 
 /** A Node script used as a CLI engine. */
@@ -63,6 +73,46 @@ suite("AI engines", () => {
       runCli(node, [engine.path], "", engine.dir, cancellation.token, 10_000),
       (e: unknown) => e instanceof vscode.CancellationError,
     );
+  });
+
+  test("reads the models a CLI lists as \"id - name\" lines (the output of cursor-agent models)", () => {
+    const output = [
+      "Available models",
+      "",
+      "auto - Auto (default)",
+      "gpt-5.3-codex-low - Codex 5.3 Low",
+      "grok-4.7-low-fast - Grok 4.7  Low Fast\u200b\u200b",
+      "\u001b[1mcomposer-2.5\u001b[0m - Composer 2.5",
+      "claude-opus-4-8[context=1m,effort=high]",
+      "auto - Listed twice",
+      "--force - Not a model",
+      "",
+    ].join("\r\n");
+    assert.deepStrictEqual(parseModelList(output), [
+      { id: "auto", name: "Auto (default)" },
+      { id: "gpt-5.3-codex-low", name: "Codex 5.3 Low" },
+      { id: "grok-4.7-low-fast", name: "Grok 4.7 Low Fast" },
+      { id: "composer-2.5", name: "Composer 2.5" },
+      { id: "claude-opus-4-8[context=1m,effort=high]" },
+    ]);
+    assert.deepStrictEqual(parseModelList(""), []);
+  });
+
+  test("a model name is a single argument and never an option", () => {
+    for (const name of ["sonnet", "gpt-5.2", "claude-opus-4-8[context=1m,effort=high,fast=false]", "vendor/model:tag"]) {
+      assert.strictEqual(isModelName(name), true, name);
+    }
+    for (const name of ["", "-m", "--dangerously-skip-permissions", "two words", "tab\there", "line\nbreak", "x".repeat(201)]) {
+      assert.strictEqual(isModelName(name), false, JSON.stringify(name));
+    }
+  });
+
+  test("asks a CLI for its models with the arguments of the engine", async () => {
+    const engine = await script("process.stdout.write('Available models\\n\\n' + process.argv.slice(2).join(',') + ' - From the arguments\\nother\\n');");
+    const models = await listCliModels(node, [engine.path, "models", "--plain"], new vscode.CancellationTokenSource().token, 10_000);
+    assert.deepStrictEqual(models, [{ id: "models,--plain", name: "From the arguments" }, { id: "other" }]);
+    const failing = await script("process.stderr.write('not logged in'); process.exit(1);");
+    await assert.rejects(listCliModels(node, [failing.path], new vscode.CancellationTokenSource().token, 10_000), /not logged in/);
   });
 
   test("GitHub Copilot: streams the answer of the language model and explains why it is asked", async () => {

@@ -24,6 +24,9 @@ import com.intellij.openapi.ui.Messages
 
 private val LOG = logger<AiReviewAction>()
 
+/** How long a CLI may take to list its models before the picker goes on without them. */
+private const val LIST_MODELS_TIMEOUT_MS = 20_000L
+
 /** "Review with AI": pick profiles, pick an engine, review in the background, then report. One review at a time per project. */
 class AiReviewAction : DumbAwareAction(message("ai.reviewWithAi"), null, AllIcons.Actions.Lightning) {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
@@ -80,16 +83,57 @@ class AiReviewAction : DumbAwareAction(message("ai.reviewWithAi"), null, AllIcon
                     onPicked = { choice ->
                         stage(project) {
                             val engine = choice.toEngine()
-                            if (engine == null) {
-                                finish(project)
-                                reportMissing(project, choice)
-                            } else review(project, session, c, selected, engine)
+                            when {
+                                engine == null -> {
+                                    finish(project)
+                                    reportMissing(project, choice)
+                                }
+                                choice.settings.modelArg == null -> review(project, session, c, selected, engine)
+                                else -> chooseModel(project, session, c, selected, choice)
+                            }
                         }
                     },
                     onDismissed = { finish(project) },
                 )
             }
 
+            override fun onThrowable(error: Throwable) {
+                finish(project)
+                fail(project, error)
+            }
+        }.queue()
+    }
+
+    /** Asks for the model of an engine that declares its model flag, after loading the models the CLI lists (when it can). */
+    private fun chooseModel(project: Project, session: ReviewSession, c: OpenPullRequest, profiles: List<Profile>, choice: EngineChoice) {
+        val executable = choice.executable?.toString() ?: return finish(project)
+        fun show(listed: List<CliModel>) = stage(project) {
+            pickModel(
+                project, choice, listed,
+                onPicked = { model ->
+                    stage(project) { review(project, session, c, profiles, choice.toEngine(model) ?: error("engine without executable")) }
+                },
+                onDismissed = { finish(project) },
+            )
+        }
+        if (choice.settings.listModelsArgs.isEmpty()) return show(emptyList())
+        object : Task.Backgroundable(project, message("ai.loadingModels", choice.id), true) {
+            private var listed = emptyList<CliModel>()
+
+            override fun run(indicator: ProgressIndicator) {
+                listed = try {
+                    listCliModels(executable, choice.settings.listModelsArgs, indicator, LIST_MODELS_TIMEOUT_MS)
+                } catch (_: EngineCancelled) {
+                    emptyList() // onCancel releases the guard.
+                } catch (e: Exception) {
+                    // Not signed in, offline, an older CLI: the picker still offers the default, the engine's models and "Other…".
+                    LOG.warn("Could not list the models of ${choice.id}: ${e.message}")
+                    emptyList()
+                }
+            }
+
+            override fun onSuccess() = show(listed)
+            override fun onCancel() = finish(project)
             override fun onThrowable(error: Throwable) {
                 finish(project)
                 fail(project, error)
@@ -110,11 +154,14 @@ class AiReviewAction : DumbAwareAction(message("ai.reviewWithAi"), null, AllIcon
 
             override fun run(indicator: ProgressIndicator) {
                 try {
-                    result = runAiReview(
-                        AiReviewOptions(
-                            session, c, profiles, engine, worktreesDir(), aiTimeoutMs(settings.aiTimeoutMinutes), settings.aiLabelComments, language, indicator,
-                        ),
-                    )
+                    // Closing the project or the IDE stops the engines too.
+                    result = cancelWhenDisposed(session, indicator) {
+                        runAiReview(
+                            AiReviewOptions(
+                                session, c, profiles, engine, worktreesDir(), aiTimeoutMs(settings.aiTimeoutMinutes), settings.aiLabelComments, language, indicator,
+                            ),
+                        )
+                    }
                 } catch (_: EngineCancelled) {
                     // onCancel informs.
                 }

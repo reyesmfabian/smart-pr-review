@@ -12,6 +12,7 @@ import com.fabianreyes.smartprreview.review.MemoryStore
 import com.fabianreyes.smartprreview.review.ReviewSession
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.io.FileUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -138,8 +139,8 @@ class RunReviewTest : BasePlatformTestCase() {
         return sh("${before}cat > /dev/null; cat '$file'")
     }
 
-    private fun profile(name: String, include: List<String> = emptyList()) =
-        Profile(name, "", include, "Look for bugs.", Profile.Source.REPOSITORY, false)
+    private fun profile(name: String, include: List<String> = emptyList(), exclude: List<String> = emptyList()) =
+        Profile(name, "", include, exclude, "Look for bugs.", Profile.Source.REPOSITORY, false)
 
     private fun options(engine: Engine, vararg profiles: Profile, indicator: ProgressIndicator? = null, timeoutMs: Long = 20_000, labelComments: Boolean = true) =
         AiReviewOptions(session, session.require(), profiles.toList(), engine, storage.resolve("worktrees"), timeoutMs, labelComments, "Spanish", indicator)
@@ -267,6 +268,81 @@ class RunReviewTest : BasePlatformTestCase() {
         assertEquals(emptyList<Any>(), session.require().drafts.all())
         assertEquals("", session.require().drafts.summary())
         assertNoWorktrees()
+    }
+
+    fun testStopsTheEnginesWhenAnotherPullRequestIsOpenedTheirFindingsWouldBeDiscarded() {
+        if (SystemInfo.isWindows) return
+        val pids = storage.resolve("pids")
+        val engine = sh("sleep 60 & echo \$! >> '$pids'; wait")
+        var result: AiReviewResult? = null
+        val started = System.currentTimeMillis()
+        val review = Thread { result = runAiReview(options(engine, profile("A"), profile("B"))) }
+        review.start()
+        waitFor(pids)
+        Thread.sleep(300)
+        session.open(1)
+        review.join(30_000)
+        // Not the 60 s the engines would run, nor the 20 s timeout.
+        assertTrue(System.currentTimeMillis() - started < 15_000)
+        assertEquals(listOf("A", "B"), result!!.failures.map { it.profile })
+        assertEquals(setOf(message("ai.prChanged")), result!!.failures.map { it.error }.toSet())
+        assertEquals(0, result!!.drafts)
+        assertNoWorktrees()
+        for (pid in pids.readText().lines().filter { it.isNotBlank() }) assertTrue("grandchild $pid alive", isDead(pid.trim().toLong()))
+    }
+
+    fun testFilesAProfileExcludesAreNotSentToTheEngine() {
+        if (SystemInfo.isWindows) return
+        val prompt = storage.resolve("prompt.txt")
+        val engine = sh("cat > '$prompt'; echo '{\"summary\":\"\",\"findings\":[]}'")
+        runAiReview(options(engine, profile("Code", listOf("src/**", "docs/**"), listOf("**/new file.ts", "docs/**"))))
+        val text = prompt.readText()
+        assertTrue(text, text.contains("## Files to review\n\n- src/app.ts\n\n## Diff"))
+        assertTrue(text, text.contains("+5| changed line 5"))
+        assertFalse(text, text.contains("new file.ts") || text.contains("new name.md") || text.contains("export const added"))
+    }
+
+    fun testNamesTheModelPickedForTheEngineInTheCommentsAndTheSummary() {
+        if (SystemInfo.isWindows) return
+        runAiReview(options(answering().copy(model = "sonnet"), profile("Security", listOf("src/**"))))
+        assertEquals(DraftOrigin.Ai("Security", "fake (sonnet)", DraftOrigin.Severity.ERROR), session.require().drafts.all().single().origin)
+        assertEquals("### Security (fake (sonnet))\n\nOne real bug.", session.require().drafts.summary())
+    }
+
+    // ---- cancelWhenDisposed ----
+
+    fun testClosingTheProjectCancelsTheReviewAndWaitsForItToStop() {
+        val parent = Disposer.newDisposable()
+        val indicator = EmptyProgressIndicator()
+        val running = java.util.concurrent.CountDownLatch(1)
+        var stopped = false
+        val worker = Thread {
+            cancelWhenDisposed(parent, indicator) {
+                running.countDown()
+                while (!indicator.isCanceled) Thread.sleep(20)
+                Thread.sleep(200) // the engines take a moment to exit
+                stopped = true
+            }
+        }
+        worker.start()
+        assertTrue(running.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        Disposer.dispose(parent)
+        // The disposal returned only once the work was over.
+        assertTrue(stopped)
+        worker.join(5_000)
+        assertFalse(worker.isAlive)
+    }
+
+    fun testAReviewThatFinishesIsNotCancelledAndAClosedProjectStartsNone() {
+        val parent = Disposer.newDisposable()
+        val indicator = EmptyProgressIndicator()
+        assertEquals("done", cancelWhenDisposed(parent, indicator) { "done" })
+        assertFalse(indicator.isCanceled)
+        Disposer.dispose(parent)
+        assertFalse(indicator.isCanceled)
+        var ran = false
+        assertThrows(EngineCancelled::class.java) { cancelWhenDisposed(parent, EmptyProgressIndicator()) { ran = true } }
+        assertFalse(ran)
     }
 
     fun testACancelledReviewLeavesNoEngineRunningAndNoWorktree() {

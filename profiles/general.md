@@ -1,6 +1,20 @@
 ---
 name: General
 description: Correctness, clarity and tests
+exclude:
+  - "**/package-lock.json"
+  - "**/npm-shrinkwrap.json"
+  - "**/pnpm-lock.yaml"
+  - "**/packages.lock.json"
+  - "**/gradle.lockfile"
+  - "**/go.sum"
+  - "**/*.lock"
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/*.js.map"
+  - "**/*.css.map"
+  - "**/__snapshots__/**"
+  - "**/*.snap"
 ---
 Review the changes the way a careful senior engineer would.
 

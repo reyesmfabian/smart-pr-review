@@ -1,6 +1,20 @@
 ---
 name: Performance
 description: Hot paths, queries, memory and blocking work
+exclude:
+  - "**/package-lock.json"
+  - "**/npm-shrinkwrap.json"
+  - "**/pnpm-lock.yaml"
+  - "**/packages.lock.json"
+  - "**/gradle.lockfile"
+  - "**/go.sum"
+  - "**/*.lock"
+  - "**/*.min.js"
+  - "**/*.min.css"
+  - "**/*.js.map"
+  - "**/*.css.map"
+  - "**/__snapshots__/**"
+  - "**/*.snap"
 ---
 Review the changes for performance problems that a user would notice.
 

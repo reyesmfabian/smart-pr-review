@@ -37,11 +37,15 @@ name: Security
 description: Injection, secrets, input validation
 include:
   - "src/**"
+exclude:
+  - "**/package-lock.json"
+  - "**/*.min.js"
 ---
 Review the changes for security problems. For each one, say how it could be exploited.
 ```
 
-- Put them in `.smart-review/profiles/` (setting `smartPrReview.profilesPath`) and commit them, so the whole team reviews with the same rules. **Create Review Profile** writes a template; use the frontmatter and instructions shown above as a starting point.
+- `include` and `exclude` are globs of repository paths. A profile reviews the changed files that match `include` (every file without it) and do not match `exclude`. Excluded files are not sent to the engine at all, which is what saves tokens: asking the model in the instructions to ignore a file still sends it. The bundled profiles exclude minified files, source maps and test snapshots; *General* and *Performance* also exclude lockfiles, which *Security* still reviews (a lockfile change can point a dependency at another registry or package).
+- Put them in `.smart-review/profiles/` (setting `smartPrReview.profilesPath`) and commit them, so the whole team reviews with the same rules. **Create Review Profile** writes a template. The [profile guide](https://github.com/reyesmfabian/smart-pr-review/blob/main/docs/review-profiles.md) explains how to write instructions that produce useful comments, with examples; to have an AI agent draft one for your repository, give it [these instructions](https://github.com/reyesmfabian/smart-pr-review/blob/main/docs/review-profile-agent-instructions.md).
 - *General*, *Security* and *Performance* ship with the extension; a repository profile with the same name replaces the bundled one.
 - A pull request cannot change the profiles that review it: profiles it modifies are read from the base, and profiles it adds are ignored. Your uncommitted edits apply at once (marked *local*).
 
@@ -51,18 +55,24 @@ Review the changes for security problems. For each one, say how it could be expl
 |---|---|---|
 | **GitHub Copilot** (default) | VS Code language models (`vscode.lm`); gets the diff and the new version of each file, split into parts that fit the model | GitHub Copilot signed in |
 | **Claude Code** | `claude -p --restricted --strict-mcp-config` (no project hooks, settings or MCP servers) with only the Read, Grep and Glob tools | `claude` in PATH, signed in |
-| **Codex** | `codex exec` in a read-only sandbox, approvals disabled | `codex` in PATH, signed in |
-| **Cursor** | `cursor-agent -p` in ask mode, sandboxed, model *auto* | `cursor-agent` in PATH, signed in |
+| **Codex** | `codex exec` in a read-only sandbox, approvals disabled, medium reasoning effort | `codex` in PATH, signed in |
+| **Cursor** | `cursor-agent -p` in ask mode, sandboxed | `cursor-agent` in PATH, signed in |
 
 With several Copilot models available you pick one, and the last one is offered first; its name appears in the summary and in the comment footers. A file too large for the model is sent as its diff only, or skipped with a note in the summary.
+
+Claude Code, Codex and Cursor ask for the model too, on every review: the one you picked last comes first, then *Default model* (whatever the CLI is set up to use), then the models the engine knows (Cursor lists the ones of your account; Claude Code offers its aliases) and *Other…* to type any name. Until you pick one, Cursor starts on *auto*. The model and the reasoning effort are what a review costs: Codex runs with medium effort instead of inheriting the one in your `~/.codex/config.toml`; change the `model_reasoning_effort` argument in `smartPrReview.engines` to use another.
+
+A review runs one engine session per profile, each with the whole diff of the files that profile reviews, so three profiles cost about three times one. Opening another pull request, refreshing this one or closing VS Code stops the engines of a review that is still running, since its findings would be discarded.
 
 Command-line engines run in a temporary worktree of the pull request, get the prompt on stdin and answer on stdout. Add your own in `smartPrReview.engines` (user settings); they are merged with the bundled ones:
 
 ```json
 "smartPrReview.engines": {
-  "my-engine": { "command": "my-ai-cli", "args": ["--print", "--read-only"] }
+  "my-engine": { "command": "my-ai-cli", "args": ["--print", "--read-only"], "modelArg": "--model", "models": ["small", "large"] }
 }
 ```
+
+`modelArg` is optional: with it the review asks for the model and appends the flag and the model to `args`. `models` are the ones to offer, `listModelsArgs` the arguments that make the command print its models (one per line, `id` or `id - name`), and `defaultModel` the one offered first.
 
 The pull request content is untrusted, so give your engine the flags that stop it from writing files, running commands and browsing the web, and check that they hold in a folder the CLI has never seen: some CLIs drop their read-only mode in folders they do not trust.
 

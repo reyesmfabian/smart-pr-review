@@ -189,6 +189,61 @@ class EnginesTest : BasePlatformTestCase() {
         assertEquals("ok", runCli(sh("printf ok"), "x".repeat(2_000_000), dir, null, 10_000))
     }
 
+    fun testAStopConditionEndsTheEngineLikeACancellation() {
+        if (posixOnly()) return
+        val engine = sh("sleep 60 & echo \$! > grandchild.pid; wait")
+        val pidFile = dir.resolve("grandchild.pid")
+        val started = System.currentTimeMillis()
+        try {
+            runCli(engine, "", dir, null, 30_000, stop = { Files.exists(pidFile) && Files.size(pidFile) > 0L })
+            fail("expected EngineCancelled")
+        } catch (_: EngineCancelled) {
+        }
+        assertTrue(System.currentTimeMillis() - started < 8_000)
+        assertDead(pidOf("grandchild.pid"))
+    }
+
+    // ---- models ----
+
+    fun testReadsTheModelsACliListsAsIdNameLines() {
+        // The output of `cursor-agent models`, with what other CLIs may add: colors, CRLF, zero-width padding.
+        val output = listOf(
+            "Available models",
+            "",
+            "auto - Auto (default)",
+            "gpt-5.3-codex-low - Codex 5.3 Low",
+            "grok-4.7-low-fast - Grok 4.7  Low Fast\u200b\u200b",
+            "\u001b[1mcomposer-2.5\u001b[0m - Composer 2.5",
+            "claude-opus-4-8[context=1m,effort=high]",
+            "auto - Listed twice",
+            "--force - Not a model",
+            "",
+        ).joinToString("\r\n")
+        assertEquals(
+            listOf(
+                CliModel("auto", "Auto (default)"),
+                CliModel("gpt-5.3-codex-low", "Codex 5.3 Low"),
+                CliModel("grok-4.7-low-fast", "Grok 4.7 Low Fast"),
+                CliModel("composer-2.5", "Composer 2.5"),
+                CliModel("claude-opus-4-8[context=1m,effort=high]"),
+            ),
+            parseModelList(output),
+        )
+        assertEquals(emptyList<CliModel>(), parseModelList(""))
+    }
+
+    fun testAModelNameIsASingleArgumentAndNeverAnOption() {
+        for (name in listOf("sonnet", "gpt-5.2", "claude-opus-4-8[context=1m,effort=high,fast=false]", "vendor/model:tag")) assertTrue(name, isModelName(name))
+        for (name in listOf("", "-m", "--dangerously-skip-permissions", "two words", "tab\there", "line\nbreak", "x".repeat(201))) assertFalse(name, isModelName(name))
+    }
+
+    fun testAsksACliForItsModelsWithTheArgumentsOfTheEngine() {
+        if (posixOnly()) return
+        val models = listCliModels("sh", listOf("-c", "printf 'Available models\\n\\nauto - Auto (default)\\nother\\n'"), null, 10_000)
+        assertEquals(listOf(CliModel("auto", "Auto (default)"), CliModel("other")), models)
+        failureOf { listCliModels("sh", listOf("-c", "echo 'not logged in' >&2; exit 1"), null, 10_000) }
+    }
+
     /** Like an npm shim: forwards arguments to a native executable, which parses them with Windows CRT rules. */
     fun testWindowsCmdShimInPathWithSpacesReceivesArgumentsVerbatim() {
         if (!SystemInfo.isWindows) return

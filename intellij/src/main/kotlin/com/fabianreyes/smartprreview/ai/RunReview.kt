@@ -6,8 +6,10 @@ import com.fabianreyes.smartprreview.git.Git
 import com.fabianreyes.smartprreview.git.LineRange
 import com.fabianreyes.smartprreview.review.OpenPullRequest
 import com.fabianreyes.smartprreview.review.ReviewSession
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.util.Disposer
 import java.io.IOException
 import java.nio.file.FileVisitResult
 import java.nio.file.Files
@@ -21,6 +23,7 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -51,7 +54,33 @@ data class AiReviewResult(
 }
 
 /** How the engine is named in progress, summaries and comment footers. */
-fun engineLabel(engine: Engine): String = engine.id
+fun engineLabel(engine: Engine): String = if (engine.model != null) "${engine.id} (${engine.model})" else engine.id
+
+/**
+ * Runs [work], cancelling [indicator] if [parent] is disposed meanwhile (the project or the IDE closing): engines left
+ * running would go on spending on a review nobody reads. The disposal waits, up to 5 s, until [work] has stopped them.
+ */
+fun <T> cancelWhenDisposed(parent: Disposable, indicator: ProgressIndicator, work: () -> T): T {
+    val done = CountDownLatch(1)
+    val stop = Disposable {
+        // Disposed by the finally below once the work is over: then there is nothing to cancel.
+        if (done.count > 0L) {
+            indicator.cancel()
+            try {
+                done.await(5, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+    }
+    if (!Disposer.tryRegister(parent, stop)) throw EngineCancelled()
+    try {
+        return work()
+    } finally {
+        done.countDown()
+        Disposer.dispose(stop)
+    }
+}
 
 /** Content git shows for a binary file. */
 fun isBinary(text: String): Boolean = '\u0000' in text
@@ -59,6 +88,8 @@ fun isBinary(text: String): Boolean = '\u0000' in text
 /**
  * Reviews the open pull request with each profile in parallel and turns the findings into drafts plus a
  * summary section per profile. The engine reads a detached worktree of the head, removed at the end.
+ * The engines are stopped when the review is cancelled, and also when another pull request is opened or
+ * this one is refreshed: their findings would be discarded.
  */
 fun runAiReview(o: AiReviewOptions): AiReviewResult {
     val c = o.pr
@@ -137,18 +168,18 @@ private fun runProfiles(o: AiReviewOptions, c: OpenPullRequest, git: Git, worktr
 }
 
 private fun reviewWithProfile(o: AiReviewOptions, c: OpenPullRequest, git: Git, profile: Profile, worktree: Path): Outcome {
-    val files = c.files.filter { it.status != ChangedFile.Status.D && appliesTo(profile.include, it.path) }.map { it.path }
+    val files = c.files.filter { it.status != ChangedFile.Status.D && appliesTo(profile.include, profile.exclude, it.path) }.map { it.path }
     if (files.isEmpty()) return Outcome.Skipped
     // With the old path of renamed files, so a rename is not sent as a whole new file.
     val diffPaths = c.files.filter { it.path in files }.flatMap { listOfNotNull(it.oldPath, it.path) }
     val prompt = buildPrompt(
-        ProfileContent(profile.name, profile.description, profile.include, profile.body),
+        ProfileContent(profile.name, profile.description, profile.include, profile.exclude, profile.body),
         files,
         git.diffText(c.mergeBase, c.pr.headSha, diffPaths),
         PromptContext(o.language, c.pr.title, c.pr.body),
     )
     return try {
-        val answer = runCli(o.engine, prompt, worktree, o.indicator, o.timeoutMs)
+        val answer = runCli(o.engine, prompt, worktree, o.indicator, o.timeoutMs, stop = { o.session.current !== c })
         try {
             Outcome.Answer(parseReviewOutput(answer))
         } catch (e: IllegalStateException) {
@@ -156,7 +187,8 @@ private fun reviewWithProfile(o: AiReviewOptions, c: OpenPullRequest, git: Git, 
             throw e
         }
     } catch (e: EngineCancelled) {
-        Outcome.Cancelled
+        // Stopped because the pull request changed, not by the user: say so.
+        if (o.indicator?.isCanceled != true && o.session.current !== c) Outcome.Failed(SmartPrReviewBundle.message("ai.prChanged")) else Outcome.Cancelled
     } catch (e: Exception) {
         val stderr = (e as? EngineException)?.stderr?.trim().orEmpty()
         LOG.warn("${profile.name} with ${engineLabel(o.engine)}: ${e.message}${if (stderr.isNotEmpty()) "\n$stderr" else ""}")

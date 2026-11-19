@@ -5,5 +5,8 @@ node_modules
 .DS_Store
 .claude/worktrees/
 /.github/RELEASING.md
-/docs/
+# Internal plans and specs stay private; only the public guides are tracked.
+/docs/*
+!/docs/review-profiles.md
+!/docs/review-profile-agent-instructions.md
 /release-assets/
