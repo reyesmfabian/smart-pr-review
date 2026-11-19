@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import * as vscode from "vscode";
-import { createProfile, reviewWithAi, stopAiReview } from "./ai/commands";
+import { createProfile, reviewWithAi, setEngineApiKey, stopAiReview } from "./ai/commands";
 import { cleanupWorktrees } from "./ai/runReview";
 import { type Auth, AzureDevOpsAuth, githubAuth, httpConsent, recoveryActions } from "./auth";
 import type { ChangedFile } from "./git";
@@ -163,7 +163,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
     command("smartPrReview.addSuggestion", () => comments.addSuggestion(vscode.window.activeTextEditor)),
-    command("smartPrReview.reviewWithAI", () => reviewWithAi(session, context.extensionPath, context.globalStorageUri.fsPath, context.globalState)),
+    command("smartPrReview.reviewWithAI", () =>
+      reviewWithAi(session, context.extensionPath, context.globalStorageUri.fsPath, context.globalState, context.secrets),
+    ),
+    command("smartPrReview.setEngineApiKey", () => setEngineApiKey(context.secrets)),
     command("smartPrReview.createProfile", () => createProfile(root)),
     command("smartPrReview.createDraft", (reply: vscode.CommentReply) => comments.createDraft(reply)),
     command("smartPrReview.createSuggestion", (reply: vscode.CommentReply) => comments.createSuggestion(reply)),

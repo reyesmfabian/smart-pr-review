@@ -54,23 +54,31 @@ data class PromptContext(
     val language: String,
     val title: String,
     val description: String,
+    /** Full new files, for engines that cannot read the repository (URL engines). */
+    val contents: Map<String, String> = emptyMap(),
 )
 
 /** Longest pull request description sent to the engine. */
 private const val MAX_DESCRIPTION = 4000
 
-/** The prompt for one profile. Every engine reads the repository itself, so no file contents are embedded. */
+/** The prompt for one profile. Command-line engines read the repository themselves; URL engines get [PromptContext.contents]. */
 fun buildPrompt(profile: ProfileContent, files: List<String>, diff: String, ctx: PromptContext): String {
     val description = if (ctx.description.length > MAX_DESCRIPTION) "${ctx.description.take(MAX_DESCRIPTION)}…" else ctx.description
-    return listOf(
-        INSTRUCTIONS,
-        "Write the summary and every message in ${ctx.language}. Keep code, identifiers and suggestions as they are.",
-        "## Review profile: ${profile.name}\n\n${profile.body}",
-        "## Pull request\n\n${ctx.title}\n\n$description".trimEnd(),
-        "## Files to review\n\n${files.joinToString("\n") { "- $it" }}",
-        "## Diff\n\n```diff\n${numberDiff(diff)}\n```",
+    return (
+        listOf(
+            INSTRUCTIONS,
+            "Write the summary and every message in ${ctx.language}. Keep code, identifiers and suggestions as they are.",
+            "## Review profile: ${profile.name}\n\n${profile.body}",
+            "## Pull request\n\n${ctx.title}\n\n$description".trimEnd(),
+            "## Files to review\n\n${files.joinToString("\n") { "- $it" }}",
+            "## Diff\n\n```diff\n${numberDiff(diff)}\n```",
+        ) + ctx.contents.map { (path, text) -> "## New version of $path\n\n```\n${numberLines(text)}\n```" }
     ).joinToString("\n\n")
 }
+
+/** Each line of [text] prefixed by its number ("12| code"), like the lines of the diff. */
+fun numberLines(text: String): String =
+    text.split("\n").let { if (text.endsWith("\n")) it.dropLast(1) else it }.mapIndexed { i, line -> "${i + 1}| $line" }.joinToString("\n")
 
 private val HUNK = Regex("""^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
 

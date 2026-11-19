@@ -34,7 +34,7 @@ data class AiReviewOptions(
     /** The pull request that was open (and checked) when the review was asked for. */
     val pr: OpenPullRequest,
     val profiles: List<Profile>,
-    val engine: Engine,
+    val engine: ReviewEngine,
     /** Folder for the temporary worktrees (tests use a temp dir). */
     val worktrees: Path,
     val timeoutMs: Long,
@@ -54,7 +54,7 @@ data class AiReviewResult(
 }
 
 /** How the engine is named in progress, summaries and comment footers. */
-fun engineLabel(engine: Engine): String = if (engine.model != null) "${engine.id} (${engine.model})" else engine.id
+fun engineLabel(engine: ReviewEngine): String = if (engine.model != null) "${engine.id} (${engine.model})" else engine.id
 
 /**
  * Runs [work], cancelling [indicator] if [parent] is disposed meanwhile (the project or the IDE closing): engines left
@@ -87,20 +87,22 @@ fun isBinary(text: String): Boolean = '\u0000' in text
 
 /**
  * Reviews the open pull request with each profile in parallel and turns the findings into drafts plus a
- * summary section per profile. The engine reads a detached worktree of the head, removed at the end.
- * The engines are stopped when the review is cancelled, and also when another pull request is opened or
- * this one is refreshed: their findings would be discarded.
+ * summary section per profile. A command-line engine reads a detached worktree of the head, removed at the end;
+ * a URL engine gets the files in the prompt instead. The engines are stopped when the review is cancelled, and
+ * also when another pull request is opened or this one is refreshed: their findings would be discarded.
  */
 fun runAiReview(o: AiReviewOptions): AiReviewResult {
     val c = o.pr
     val git = o.session.git
     if (o.profiles.isEmpty()) return AiReviewResult(0, emptyList(), emptyList())
     // The creation time in the name lets cleanupWorktrees find folders left by an IDE that closed mid-review.
-    val worktree = o.worktrees.resolve("pr-${c.pr.id}-${System.currentTimeMillis()}-${UUID.randomUUID()}")
-    Files.createDirectories(o.worktrees)
+    val worktree = if (o.engine is Engine) o.worktrees.resolve("pr-${c.pr.id}-${System.currentTimeMillis()}-${UUID.randomUUID()}") else null
+    if (worktree != null) Files.createDirectories(o.worktrees)
     try {
-        git.addWorktree(worktree, c.pr.headSha)
-        removeAgentConfiguration(worktree, Git(worktree))
+        if (worktree != null) {
+            git.addWorktree(worktree, c.pr.headSha)
+            removeAgentConfiguration(worktree, Git(worktree))
+        }
         val outcomes = runProfiles(o, c, git, worktree)
         // Every engine has exited before the worktree is removed, even when one was cancelled.
         if (outcomes.any { it is Outcome.Cancelled }) throw EngineCancelled()
@@ -127,18 +129,22 @@ fun runAiReview(o: AiReviewOptions): AiReviewResult {
         return AiReviewResult(drafts, reviewed, failures)
     } finally {
         // Cleanup must never replace the result (or the original exception) with its own failure.
-        try {
-            // A failed addWorktree may leave nothing registered; remove what exists either way.
-            if (Files.exists(worktree)) git.removeWorktree(worktree)
-        } catch (e: Exception) {
-            LOG.warn("Could not remove $worktree: $e")
-        }
-        try {
-            if (Files.exists(worktree, LinkOption.NOFOLLOW_LINKS)) deleteWithoutFollowing(worktree)
-            git.pruneWorktrees()
-        } catch (e: Exception) {
-            LOG.warn("Could not clean up $worktree: $e")
-        }
+        if (worktree != null) removeReviewWorktree(git, worktree)
+    }
+}
+
+private fun removeReviewWorktree(git: Git, worktree: Path) {
+    try {
+        // A failed addWorktree may leave nothing registered; remove what exists either way.
+        if (Files.exists(worktree)) git.removeWorktree(worktree)
+    } catch (e: Exception) {
+        LOG.warn("Could not remove $worktree: $e")
+    }
+    try {
+        if (Files.exists(worktree, LinkOption.NOFOLLOW_LINKS)) deleteWithoutFollowing(worktree)
+        git.pruneWorktrees()
+    } catch (e: Exception) {
+        LOG.warn("Could not clean up $worktree: $e")
     }
 }
 
@@ -149,7 +155,7 @@ private sealed interface Outcome {
     data class Failed(val error: String) : Outcome
 }
 
-private fun runProfiles(o: AiReviewOptions, c: OpenPullRequest, git: Git, worktree: Path): List<Outcome> {
+private fun runProfiles(o: AiReviewOptions, c: OpenPullRequest, git: Git, worktree: Path?): List<Outcome> {
     val pool = Executors.newFixedThreadPool(o.profiles.size)
     try {
         // invokeAll waits for every profile (allSettled): one failing does not stop the others.
@@ -167,24 +173,31 @@ private fun runProfiles(o: AiReviewOptions, c: OpenPullRequest, git: Git, worktr
     }
 }
 
-private fun reviewWithProfile(o: AiReviewOptions, c: OpenPullRequest, git: Git, profile: Profile, worktree: Path): Outcome {
+private fun reviewWithProfile(o: AiReviewOptions, c: OpenPullRequest, git: Git, profile: Profile, worktree: Path?): Outcome {
     val files = c.files.filter { it.status != ChangedFile.Status.D && appliesTo(profile.include, profile.exclude, it.path) }.map { it.path }
     if (files.isEmpty()) return Outcome.Skipped
     // With the old path of renamed files, so a rename is not sent as a whole new file.
-    val diffPaths = c.files.filter { it.path in files }.flatMap { listOfNotNull(it.oldPath, it.path) }
-    val prompt = buildPrompt(
-        ProfileContent(profile.name, profile.description, profile.include, profile.exclude, profile.body),
-        files,
-        git.diffText(c.mergeBase, c.pr.headSha, diffPaths),
-        PromptContext(o.language, c.pr.title, c.pr.body),
-    )
+    fun diffOf(paths: List<String>) = git.diffText(c.mergeBase, c.pr.headSha, c.files.filter { it.path in paths }.flatMap { listOfNotNull(it.oldPath, it.path) })
+    val content = ProfileContent(profile.name, profile.description, profile.include, profile.exclude, profile.body)
+    val context = PromptContext(o.language, c.pr.title, c.pr.body)
+    val stop = { o.session.current !== c }
+    fun parse(answer: String): ReviewOutput = try {
+        parseReviewOutput(answer)
+    } catch (e: IllegalStateException) {
+        LOG.warn("Answer for ${profile.name} with ${engineLabel(o.engine)}:\n$answer")
+        throw e
+    }
     return try {
-        val answer = runCli(o.engine, prompt, worktree, o.indicator, o.timeoutMs, stop = { o.session.current !== c })
-        try {
-            Outcome.Answer(parseReviewOutput(answer))
-        } catch (e: IllegalStateException) {
-            LOG.warn("Answer for ${profile.name} with ${engineLabel(o.engine)}:\n$answer")
-            throw e
+        when (val engine = o.engine) {
+            is Engine -> Outcome.Answer(parse(runCli(engine, buildPrompt(content, files, diffOf(files), context), checkNotNull(worktree), o.indicator, o.timeoutMs, stop = stop)))
+            is UrlEngine -> {
+                // It cannot read the repository: it gets the new version of each file too, in parts that fit its window.
+                val batches = promptsWithinLimit(files, engine.maxInputTokens) { batch, withContents ->
+                    val contents = if (withContents) batch.associateWith { git.showFile(c.pr.headSha, it) }.filterValues { !isBinary(it) } else emptyMap()
+                    buildPrompt(content, batch, diffOf(batch), context.copy(contents = contents))
+                }
+                Outcome.Answer(reviewInParts(batches, profile, engine) { parse(runChat(engine, it, o.indicator, o.timeoutMs, stop)) })
+            }
         }
     } catch (e: EngineCancelled) {
         // Stopped because the pull request changed, not by the user: say so.
@@ -194,6 +207,31 @@ private fun reviewWithProfile(o: AiReviewOptions, c: OpenPullRequest, git: Git, 
         LOG.warn("${profile.name} with ${engineLabel(o.engine)}: ${e.message}${if (stderr.isNotEmpty()) "\n$stderr" else ""}")
         Outcome.Failed(e.message ?: e.toString())
     }
+}
+
+/**
+ * Reviews each prompt of [batches] with [review] and joins the answers. A part that fails does not lose the others:
+ * the summary says which failed, and which files were too large to send. Fails only when every part failed.
+ */
+private fun reviewInParts(batches: PromptBatches, profile: Profile, engine: ReviewEngine, review: (String) -> ReviewOutput): ReviewOutput {
+    val outputs = mutableListOf<ReviewOutput>()
+    val errors = mutableListOf<String>()
+    for (prompt in batches.prompts) {
+        try {
+            outputs += review(prompt)
+        } catch (e: EngineCancelled) {
+            throw e
+        } catch (e: Exception) {
+            errors += e.message ?: e.toString()
+            LOG.warn("${profile.name} with ${engineLabel(engine)}: ${errors.last()}")
+        }
+    }
+    if (batches.prompts.isNotEmpty() && errors.size == batches.prompts.size) throw EngineException(errors.first())
+    val notes = listOfNotNull(
+        errors.takeIf { it.isNotEmpty() }?.let { SmartPrReviewBundle.message("ai.partsFailed", it.size, batches.prompts.size, it.distinct().joinToString("; ")) },
+        batches.skipped.takeIf { it.isNotEmpty() }?.let { SmartPrReviewBundle.message("ai.tooLargeForModel", it.joinToString(", ")) },
+    )
+    return ReviewOutput((outputs.map { it.summary } + notes).filter { it.isNotEmpty() }.joinToString("\n\n"), outputs.flatMap { it.findings })
 }
 
 /** Applies [output] to [c], the pull request that was reviewed; null when it is no longer the open one (nothing applied). */

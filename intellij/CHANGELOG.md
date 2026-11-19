@@ -1,5 +1,11 @@
 # Changelog — IntelliJ Platform
 
+## 0.3.0 — 2026-11-19
+
+### Added
+- AI engines reached by URL: an entry of the engines JSON with `url` reviews with any OpenAI-compatible server (Ollama, LM Studio, vLLM, llama.cpp, LiteLLM, OpenRouter), local, on your network or online. It gets the new version of each changed file, split to fit `contextWindow` minus `maxOutputTokens`, needs no worktree, and asks for the model on every review, offering the ones the server lists. *Set API Key of an AI Engine* stores its key per URL in the IDE's PasswordSafe, so it never reaches another server.
+- Reasoning models work with URL engines: their reasoning is left out of the answer, and an answer cut short by `maxOutputTokens` fails with a message that says so. A rejected API key, a server that cannot be reached or a URL that is not an OpenAI-compatible API are reported naming the server. Cancelling the review or reaching its timeout stops the request.
+
 ## 0.2.0 — 2026-11-18
 
 ### Added

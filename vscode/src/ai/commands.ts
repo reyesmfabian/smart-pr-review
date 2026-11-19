@@ -5,7 +5,21 @@ import * as vscode from "vscode";
 import type { ChangedFile } from "../git";
 import { aiLog } from "../log";
 import type { ReviewSession } from "../review/session";
-import { type ChatModel, type CliEngineConfig, type CliModel, copilotModels, findExecutable, isModelName, listCliModels } from "./engines";
+import {
+  apiBase,
+  type ChatModel,
+  type CliEngineConfig,
+  type CliModel,
+  copilotModels,
+  DEFAULT_CONTEXT_WINDOW,
+  DEFAULT_MAX_OUTPUT_TOKENS,
+  findExecutable,
+  isModelName,
+  listCliModels,
+  listUrlModels,
+  type UrlEngineConfig,
+  urlChatModel,
+} from "./engines";
 import { appliesTo, loadProfiles, type Profile } from "./profiles";
 import { type Engine, engineLabel, runAiReview } from "./runReview";
 
@@ -125,20 +139,32 @@ export async function stopAiReview(): Promise<void> {
 }
 
 /** "Review with AI": pick profiles, pick an engine, review, then report. */
-export async function reviewWithAi(session: ReviewSession, extensionPath: string, storagePath: string, state: vscode.Memento): Promise<void> {
+export async function reviewWithAi(
+  session: ReviewSession,
+  extensionPath: string,
+  storagePath: string,
+  state: vscode.Memento,
+  secrets: vscode.SecretStorage,
+): Promise<void> {
   if (busy) {
     void vscode.window.showInformationMessage(vscode.l10n.t("An AI review is already running. Wait for it to finish, or cancel it."));
     return;
   }
   busy = true;
   try {
-    await review(session, extensionPath, storagePath, state);
+    await review(session, extensionPath, storagePath, state, secrets);
   } finally {
     busy = false;
   }
 }
 
-async function review(session: ReviewSession, extensionPath: string, storagePath: string, state: vscode.Memento): Promise<void> {
+async function review(
+  session: ReviewSession,
+  extensionPath: string,
+  storagePath: string,
+  state: vscode.Memento,
+  secrets: vscode.SecretStorage,
+): Promise<void> {
   const c = session.require();
   const config = vscode.workspace.getConfiguration("smartPrReview", vscode.Uri.file(session.repoRoot));
   const profiles = await loadProfiles({
@@ -155,7 +181,7 @@ async function review(session: ReviewSession, extensionPath: string, storagePath
   if (!selected?.length) {
     return;
   }
-  const engine = await pickEngine(config, state);
+  const engine = await pickEngine(config, state, secrets);
   if (!engine) {
     return;
   }
@@ -238,36 +264,72 @@ async function pickProfiles(profiles: readonly Profile[], changed: readonly stri
   return picked?.map((item) => item.profile);
 }
 
+/** An engine of smartPrReview.engines: a command, or a server reached by URL. */
+export type EngineConfig = CliEngineConfig | UrlEngineConfig;
+
 /** Bundled engines plus the user's own: an object setting would otherwise replace its default entirely. */
-export function cliEngines(inspected: { defaultValue?: unknown; globalValue?: unknown } | undefined): Record<string, CliEngineConfig> {
+export function aiEngines(inspected: { defaultValue?: unknown; globalValue?: unknown } | undefined): Record<string, EngineConfig> {
   return { ...asEngines(inspected?.defaultValue), ...asEngines(inspected?.globalValue) };
 }
 
-function asEngines(value: unknown): Record<string, CliEngineConfig> {
+function isHttpUrl(value: string): boolean {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+const positiveInteger = (value: unknown): number | undefined => (Number.isInteger(value) && (value as number) > 0 ? (value as number) : undefined);
+
+function asEngines(value: unknown): Record<string, EngineConfig> {
   if (typeof value !== "object" || value === null) {
     return {};
   }
-  const engines: Record<string, CliEngineConfig> = {};
+  const engines: Record<string, EngineConfig> = {};
   for (const [id, entry] of Object.entries(value)) {
-    const e = entry as { command?: unknown; args?: unknown; modelArg?: unknown; models?: unknown; listModelsArgs?: unknown; defaultModel?: unknown };
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const e = entry as {
+      command?: unknown;
+      args?: unknown;
+      modelArg?: unknown;
+      models?: unknown;
+      listModelsArgs?: unknown;
+      defaultModel?: unknown;
+      url?: unknown;
+      contextWindow?: unknown;
+      maxOutputTokens?: unknown;
+    };
     const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((a) => typeof a === "string");
-    if (typeof e?.command === "string" && e.command && (e.args === undefined || strings(e.args))) {
-      // The model fields are optional extras: a malformed one is left out, the engine still works.
+    // The model fields are optional extras: a malformed one is left out, the engine still works.
+    const models = {
+      ...(strings(e.models) ? { models: e.models.filter(isModelName) } : {}),
+      ...(typeof e.defaultModel === "string" && isModelName(e.defaultModel) ? { defaultModel: e.defaultModel } : {}),
+    };
+    if (typeof e.url === "string" && isHttpUrl(e.url)) {
+      engines[id] = {
+        url: e.url,
+        contextWindow: positiveInteger(e.contextWindow) ?? DEFAULT_CONTEXT_WINDOW,
+        maxOutputTokens: positiveInteger(e.maxOutputTokens) ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        ...models,
+      };
+    } else if (typeof e.command === "string" && e.command && (e.args === undefined || strings(e.args))) {
       engines[id] = {
         command: e.command,
         args: e.args as string[] | undefined,
         ...(typeof e.modelArg === "string" && e.modelArg ? { modelArg: e.modelArg } : {}),
-        ...(strings(e.models) ? { models: e.models.filter(isModelName) } : {}),
         ...(strings(e.listModelsArgs) && e.listModelsArgs.length ? { listModelsArgs: e.listModelsArgs } : {}),
-        ...(typeof e.defaultModel === "string" && isModelName(e.defaultModel) ? { defaultModel: e.defaultModel } : {}),
+        ...models,
       };
     }
   }
   return engines;
 }
 
-/** The model of a CLI engine picked last ("" for the CLI's own default), offered first next time. */
-const lastCliModelKey = (engineId: string) => `smartPrReview.cliModel.${engineId}`;
+/** The model of an engine picked last ("" for a CLI's own default), offered first next time. */
+const lastModelKey = (engineId: string) => `smartPrReview.cliModel.${engineId}`;
 
 /**
  * What the model picker of a CLI engine offers, in order: the model picked last (the engine's default one
@@ -291,7 +353,7 @@ export function cliModelChoices(
   return [...(preferred ? [preferred] : []), undefined, ...[...known.values()].filter((m) => m.id !== preferred?.id)];
 }
 
-/** Seconds a CLI may take to list its models before the picker goes on without them. */
+/** Seconds an engine may take to list its models before the picker goes on without them. */
 const LIST_MODELS_TIMEOUT_MS = 20_000;
 
 interface ModelItem extends vscode.QuickPickItem {
@@ -299,30 +361,35 @@ interface ModelItem extends vscode.QuickPickItem {
   choice: { model: string | undefined } | "other";
 }
 
+interface ModelSource {
+  /** Lists the engine's models, added to the picker when they arrive. */
+  list?: (token: vscode.CancellationToken) => Promise<CliModel[]>;
+  /** What the "Default model" entry says it is. Without it there is no such entry: a URL engine needs a model. */
+  ownDefault?: string;
+  /** Prompt of the box where another model is typed. */
+  otherPrompt: string;
+}
+
 /**
- * Asks for the model of a CLI engine that declares its model flag. Returns the model, undefined in `model`
- * for the CLI's own default, or undefined when the picker was dismissed. The picker opens at once and the
- * models the CLI lists are added when they arrive.
+ * Asks for the model of an engine. Returns the model, undefined in `model` for the CLI's own default, or
+ * undefined when the picker was dismissed. The picker opens at once and the listed models are added when
+ * they arrive.
  */
-async function pickCliModel(
+async function pickModel(
   id: string,
-  engine: CliEngineConfig,
-  executable: string,
+  engine: Pick<CliEngineConfig, "models" | "defaultModel">,
+  source: ModelSource,
   state: vscode.Memento,
 ): Promise<{ model: string | undefined } | undefined> {
-  const key = lastCliModelKey(id);
+  const key = lastModelKey(id);
   const last = state.get<string>(key);
   const items = (listed: readonly CliModel[]): ModelItem[] => [
-    ...cliModelChoices(engine, listed, last).map(
-      (model): ModelItem =>
-        model
-          ? { label: model.id, description: model.name, choice: { model: model.id } }
-          : {
-              label: vscode.l10n.t("Default model"),
-              description: vscode.l10n.t("the one {0} is set up to use", engine.command),
-              choice: { model: undefined },
-            },
-    ),
+    ...cliModelChoices(engine, listed, last).flatMap((model): ModelItem[] => {
+      if (model) {
+        return [{ label: model.id, description: model.name, choice: { model: model.id } }];
+      }
+      return source.ownDefault ? [{ label: vscode.l10n.t("Default model"), description: source.ownDefault, choice: { model: undefined } }] : [];
+    }),
     { label: vscode.l10n.t("Other…"), description: vscode.l10n.t("type a model name"), choice: "other" },
   ];
   const pick = vscode.window.createQuickPick<ModelItem>();
@@ -333,9 +400,10 @@ async function pickCliModel(
     pick.placeholder = vscode.l10n.t("Choose the model of {0}", id);
     pick.matchOnDescription = true;
     pick.items = items([]);
-    if (engine.listModelsArgs) {
+    if (source.list) {
       pick.busy = true;
-      void listCliModels(executable, engine.listModelsArgs, listing.token, LIST_MODELS_TIMEOUT_MS)
+      void source
+        .list(listing.token)
         .then(
           (listed) => {
             if (listing.token.isCancellationRequested) {
@@ -348,7 +416,8 @@ async function pickCliModel(
             pick.activeItems = pick.items.filter((item) => item.label === active).slice(0, 1);
           },
           (error) => {
-            if (!(error instanceof vscode.CancellationError)) {
+            // A listing stopped because the picker closed is not worth a warning.
+            if (!listing.token.isCancellationRequested && !(error instanceof vscode.CancellationError)) {
               aiLog.warn(`Could not list the models of ${id}: ${error instanceof Error ? error.message : String(error)}`);
             }
           },
@@ -375,7 +444,7 @@ async function pickCliModel(
   if (choice === "other") {
     const typed = await vscode.window.showInputBox({
       title: vscode.l10n.t("Review with AI"),
-      prompt: vscode.l10n.t("Model name, as {0} expects it after {1}", engine.command, engine.modelArg ?? ""),
+      prompt: source.otherPrompt,
       validateInput: (value) => (isModelName(value.trim()) ? undefined : vscode.l10n.t("Enter a model name without spaces.")),
     });
     if (!typed?.trim()) {
@@ -387,8 +456,8 @@ async function pickCliModel(
   return choice;
 }
 
-async function pickEngine(config: vscode.WorkspaceConfiguration, state: vscode.Memento): Promise<Engine | undefined> {
-  const engines = cliEngines(config.inspect("engines"));
+async function pickEngine(config: vscode.WorkspaceConfiguration, state: vscode.Memento, secrets: vscode.SecretStorage): Promise<Engine | undefined> {
+  const engines = aiEngines(config.inspect("engines"));
   const defaultId = config.get<string>("defaultEngine", "copilot");
   const candidates = [
     {
@@ -397,7 +466,12 @@ async function pickEngine(config: vscode.WorkspaceConfiguration, state: vscode.M
       description: vscode.l10n.t("VS Code language models"),
       available: copilotModels().then((models) => models.length > 0),
     },
-    ...Object.entries(engines).map(([id, e]) => ({ id, label: id, description: e.command, available: findExecutable(e.command).then(Boolean) })),
+    // A server is not probed here: one on the network could keep the picker waiting.
+    ...Object.entries(engines).map(([id, e]) =>
+      "url" in e
+        ? { id, label: id, description: e.url, available: Promise.resolve(true) }
+        : { id, label: id, description: e.command, available: findExecutable(e.command).then(Boolean) },
+    ),
   ];
   const items = await Promise.all(
     candidates.map(async (c) => ({
@@ -419,6 +493,9 @@ async function pickEngine(config: vscode.WorkspaceConfiguration, state: vscode.M
     return model && { kind: "copilot", id: "copilot", model };
   }
   const engine = engines[choice.id];
+  if ("url" in engine) {
+    return pickUrlEngine(choice.id, engine, state, secrets);
+  }
   const executable = await findExecutable(engine.command);
   if (!executable) {
     return reportMissing(
@@ -430,13 +507,83 @@ async function pickEngine(config: vscode.WorkspaceConfiguration, state: vscode.M
   if (!engine.modelArg) {
     return { kind: "cli", id: choice.id, executable, args };
   }
-  const picked = await pickCliModel(choice.id, engine, executable, state);
+  const listModelsArgs = engine.listModelsArgs;
+  const picked = await pickModel(
+    choice.id,
+    engine,
+    {
+      list: listModelsArgs && ((token) => listCliModels(executable, listModelsArgs, token, LIST_MODELS_TIMEOUT_MS)),
+      ownDefault: vscode.l10n.t("the one {0} is set up to use", engine.command),
+      otherPrompt: vscode.l10n.t("Model name, as {0} expects it after {1}", engine.command, engine.modelArg),
+    },
+    state,
+  );
   if (!picked) {
     return undefined;
   }
   return picked.model === undefined
     ? { kind: "cli", id: choice.id, executable, args }
     : { kind: "cli", id: choice.id, executable, args: [...args, engine.modelArg, picked.model], model: picked.model };
+}
+
+/** The secret that holds the API key of a URL engine: per URL, so a key never goes to a server it was not set for. */
+export const apiKeySecret = (engine: Pick<UrlEngineConfig, "url">) => `smartPrReview.engineApiKey:${apiBase(engine)}`;
+
+async function pickUrlEngine(id: string, engine: UrlEngineConfig, state: vscode.Memento, secrets: vscode.SecretStorage): Promise<Engine | undefined> {
+  if (engine.maxOutputTokens >= engine.contextWindow) {
+    void vscode.window.showErrorMessage(
+      vscode.l10n.t(
+        "maxOutputTokens of {0} ({1}) leaves no room for the prompt in its contextWindow ({2}). Lower it in the setting smartPrReview.engines.",
+        id,
+        engine.maxOutputTokens,
+        engine.contextWindow,
+      ),
+    );
+    return undefined;
+  }
+  const apiKey = (await secrets.get(apiKeySecret(engine))) || undefined;
+  const picked = await pickModel(
+    id,
+    engine,
+    {
+      list: (token) => listUrlModels(engine, apiKey, token, LIST_MODELS_TIMEOUT_MS),
+      otherPrompt: vscode.l10n.t("Model name, as {0} lists it", engine.url),
+    },
+    state,
+  );
+  return picked?.model === undefined ? undefined : { kind: "url", id, model: urlChatModel(engine, picked.model, apiKey) };
+}
+
+/** "Set API Key of an AI Engine": kept in SecretStorage, per URL. An empty answer removes the stored key. */
+export async function setEngineApiKey(secrets: vscode.SecretStorage): Promise<void> {
+  const engines = Object.entries(aiEngines(vscode.workspace.getConfiguration("smartPrReview").inspect("engines"))).flatMap(([id, e]) =>
+    "url" in e ? [{ label: id, description: e.url, engine: e }] : [],
+  );
+  if (engines.length === 0) {
+    void vscode.window.showInformationMessage(vscode.l10n.t("No AI engine has a url. Add one to the setting smartPrReview.engines first."));
+    return;
+  }
+  const choice =
+    engines.length === 1
+      ? engines[0]
+      : await vscode.window.showQuickPick(engines, { title: vscode.l10n.t("API key of an AI engine"), placeHolder: vscode.l10n.t("Choose the engine") });
+  if (!choice) {
+    return;
+  }
+  const value = await vscode.window.showInputBox({
+    title: vscode.l10n.t("API key of {0}", choice.label),
+    prompt: vscode.l10n.t("The key {0} expects. Leave it empty to remove the stored key.", choice.engine.url),
+    password: true,
+    ignoreFocusOut: true,
+  });
+  if (value === undefined) {
+    return;
+  }
+  if (value.trim()) {
+    await secrets.store(apiKeySecret(choice.engine), value.trim());
+  } else {
+    await secrets.delete(apiKeySecret(choice.engine));
+  }
 }
 
 async function pickCopilotModel(state: vscode.Memento): Promise<ChatModel | undefined> {

@@ -30,9 +30,11 @@ export async function requestJson<T>(url: string, init: RequestInit = {}): Promi
 
 function errorMessage(text: string): string {
   try {
-    const body = JSON.parse(text) as { message?: string; errors?: unknown[] };
+    // GitHub and Azure DevOps answer { message, errors }; OpenAI-compatible servers { error: { message } } or { error }.
+    const body = JSON.parse(text) as { message?: string; errors?: unknown[]; error?: string | { message?: string } };
     const details = (body.errors ?? []).map((e) => (typeof e === "string" ? e : (e as { message?: string }).message));
-    return [body.message, ...details].filter(Boolean).join(" — ");
+    const error = typeof body.error === "string" ? body.error : body.error?.message;
+    return [body.message, error, ...details].filter(Boolean).join(" — ");
   } catch {
     return text.slice(0, 200);
   }

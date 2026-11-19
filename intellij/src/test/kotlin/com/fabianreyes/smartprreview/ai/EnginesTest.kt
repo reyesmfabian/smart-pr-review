@@ -1,12 +1,15 @@
 package com.fabianreyes.smartprreview.ai
 
 import com.fabianreyes.smartprreview.SmartPrReviewBundle
+import com.google.gson.JsonParser
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 class EnginesTest : BasePlatformTestCase() {
@@ -290,5 +293,95 @@ class EnginesTest : BasePlatformTestCase() {
         val deadline = System.currentTimeMillis() + 2_000
         while (System.currentTimeMillis() < deadline && ProcessHandle.of(pid).map { it.isAlive }.orElse(false)) Thread.sleep(20)
         assertTrue("process $pid still alive", ProcessHandle.of(pid).map { !it.isAlive }.orElse(true))
+    }
+
+    // ---- URL engines ----
+
+    private fun engineError(block: () -> Unit): String {
+        try {
+            block()
+        } catch (e: EngineException) {
+            return e.message.orEmpty()
+        }
+        throw AssertionError("expected an EngineException")
+    }
+
+    fun testAUrlEngineSendsThePromptWithTheModelMaxTokensAndKeyAndDropsTheReasoning() {
+        val json = "```json\n{\"summary\":\"ok\",\"findings\":[]}\n```"
+        FakeChatServer { completion("<think>maybe { this</think>\n$json") }.use { server ->
+            val engine = UrlEngine("qwen", "qwen3.8-27b", server.url, 32768, 8192, "secret")
+            assertEquals(24576, engine.maxInputTokens)
+            assertEquals("\n$json", runChat(engine, "the prompt", null, 10_000))
+            val request = server.requests.single()
+            assertEquals(listOf("POST", "/v1/chat/completions", "Bearer secret"), listOf(request.method, request.path, request.authorization))
+            assertEquals(
+                JsonParser.parseString("""{"model":"qwen3.8-27b","messages":[{"role":"user","content":"the prompt"}],"max_tokens":8192,"stream":false}"""),
+                JsonParser.parseString(request.body),
+            )
+            // Engines end up in logs.
+            assertFalse(engine.toString(), "secret" in engine.toString())
+        }
+    }
+
+    fun testAUrlEngineSaysWhyAnAnswerWasCutAKeyRejectedARequestRefusedOrAServerMisread() {
+        val answers = ArrayDeque(listOf(
+            completion("<think>still thinking", "length"),
+            401 to """{"error":{"message":"Invalid API key"}}""",
+            404 to """{"error":"model 'nope' not found"}""",
+            200 to """{"ok":true}""",
+        ))
+        val url = FakeChatServer { answers.removeFirst() }.use { server ->
+            val engine = UrlEngine("x", "m", server.url, 8192, 4096, null)
+            assertEquals(SmartPrReviewBundle.message("ai.outputCut", 4096), engineError { runChat(engine, "p", null, 10_000) })
+            assertEquals(SmartPrReviewBundle.message("ai.apiKeyRejected", server.url, 401), engineError { runChat(engine.copy(apiKey = "bad"), "p", null, 10_000) })
+            assertEquals(
+                SmartPrReviewBundle.message("ai.httpFailed", server.url, 404, "model 'nope' not found"),
+                engineError { runChat(engine.copy(model = "nope"), "p", null, 10_000) },
+            )
+            assertEquals(SmartPrReviewBundle.message("ai.notOpenAi", server.url), engineError { runChat(engine, "p", null, 10_000) })
+            server.url
+        }
+        // The server is gone: nothing listens on its port any more.
+        val refused = engineError { runChat(UrlEngine("x", "m", url, 8192, 4096, null), "p", null, 10_000) }
+        assertTrue(refused, refused.startsWith(SmartPrReviewBundle.message("ai.unreachable", url, "")))
+    }
+
+    fun testAUrlRequestIsAbortedOnTimeoutAndOnCancellation() {
+        val release = CountDownLatch(1)
+        FakeChatServer { release.await(10, TimeUnit.SECONDS); completion("late") }.use { server ->
+            try {
+                val engine = UrlEngine("x", "m", server.url, 8192, 4096, null)
+                val started = System.currentTimeMillis()
+                assertEquals(SmartPrReviewBundle.message("ai.timeout", 300 / 60000.0), engineError { runChat(engine, "p", null, 300) })
+                try {
+                    runChat(engine, "p", EmptyProgressIndicator().apply { cancel() }, 10_000)
+                    fail("a cancelled review must not wait for the answer")
+                } catch (_: EngineCancelled) {
+                }
+                assertTrue(System.currentTimeMillis() - started < 5_000)
+            } finally {
+                release.countDown()
+            }
+        }
+    }
+
+    fun testListsTheModelsOfAUrlEngineSendingNoKeyWhenThereIsNone() {
+        FakeChatServer { 200 to """{"object":"list","data":[{"id":"qwen3.8-27b"},{"id":"openai/gpt-oss-20b"},{"id":"--bad"},{},null]}""" }.use { server ->
+            assertEquals(listOf(CliModel("qwen3.8-27b"), CliModel("openai/gpt-oss-20b")), listUrlModels(server.url, null, 10_000))
+            assertEquals("/v1/models", server.requests.single().path)
+            assertNull(server.requests.single().authorization)
+        }
+    }
+
+    fun testSplitsPromptsToFitTheWindowWithAMarginSendsATooLargeFileAsDiffOnlyAndSkipsWhatStillDoesNotFit() {
+        // Tokens are estimated at 3 characters each; each file is 40 characters with its contents.
+        val make = { batch: List<String>, withContents: Boolean -> batch.joinToString("|") { if (withContents) it.padEnd(40, '.') else it } }
+        val split = promptsWithinLimit(listOf("a.ts", "b.ts", "c.ts", "d.ts"), 34, make)
+        assertEquals(listOf(listOf("a.ts", "b.ts"), listOf("c.ts", "d.ts")), split.prompts.map { p -> p.split("|").map { it.take(4) } })
+        assertEquals(emptyList<String>(), split.skipped)
+        // 81 characters (27 tokens) fit 28 tokens, but not 28 minus the margin.
+        assertEquals(2, promptsWithinLimit(listOf("a.ts", "b.ts"), 28, make).prompts.size)
+        assertEquals(PromptBatches(listOf("diff"), emptyList()), promptsWithinLimit(listOf("big.ts"), 20) { _, withContents -> if (withContents) "x".repeat(300) else "diff" })
+        assertEquals(PromptBatches(emptyList(), listOf("huge.ts")), promptsWithinLimit(listOf("huge.ts"), 20) { _, _ -> "x".repeat(300) })
     }
 }

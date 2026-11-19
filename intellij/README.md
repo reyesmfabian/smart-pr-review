@@ -2,7 +2,8 @@
 
 Review GitHub and Azure DevOps pull requests in IntelliJ IDEA and Android Studio.
 The plugin supports drafts, suggestions, conversations, publishing, viewed files,
-checkout, AI reviews through configured CLI engines, and persistent review worktrees.
+checkout, AI reviews through configured CLI engines or OpenAI-compatible servers
+(Ollama, LM Studio, vLLM, llama.cpp, OpenRouter…), and persistent review worktrees.
 
 ## IntelliJ review interface
 

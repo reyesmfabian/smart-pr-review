@@ -165,5 +165,16 @@
   "Review Worktrees": "Worktrees de revisión",
   "Choose a worktree to open or remove": "Elige un worktree para abrir o eliminar",
   "Review worktree removed.": "Worktree de revisión eliminado.",
-  "Create Review Worktree": "Crear worktree de revisión"
+  "Create Review Worktree": "Crear worktree de revisión",
+  "{0} rejected the API key (HTTP {1}). Set it with \"Set API Key of an AI Engine\".": "{0} rechazó la API key (HTTP {1}). Configúrala con \"Configurar API key de un engine de IA\".",
+  "{0} answered HTTP {1}: {2}": "{0} respondió HTTP {1}: {2}",
+  "Could not reach {0}: {1}": "No se pudo conectar con {0}: {1}",
+  "The model used up maxOutputTokens ({0}) before finishing its answer. Raise maxOutputTokens of the engine, or lower the model's reasoning.": "El modelo agotó maxOutputTokens ({0}) antes de terminar su respuesta. Sube maxOutputTokens del engine o baja el razonamiento del modelo.",
+  "maxOutputTokens of {0} ({1}) leaves no room for the prompt in its contextWindow ({2}). Lower it in the setting smartPrReview.engines.": "maxOutputTokens de {0} ({1}) no deja espacio para el prompt en su contextWindow ({2}). Bájalo en el setting smartPrReview.engines.",
+  "Model name, as {0} lists it": "Nombre del modelo, como lo lista {0}",
+  "No AI engine has a url. Add one to the setting smartPrReview.engines first.": "Ningún engine de IA tiene url. Agrega uno primero en el setting smartPrReview.engines.",
+  "API key of an AI engine": "API key de un engine de IA",
+  "API key of {0}": "API key de {0}",
+  "The key {0} expects. Leave it empty to remove the stored key.": "La clave que espera {0}. Déjala vacía para eliminar la clave guardada.",
+  "{0} did not answer like an OpenAI-compatible API. Check the url of the engine.": "{0} no respondió como una API compatible con OpenAI. Revisa la url del engine."
 }

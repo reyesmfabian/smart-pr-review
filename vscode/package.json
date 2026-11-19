@@ -2,7 +2,7 @@
   "name": "smart-pr-review",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "fabianreyes",
   "icon": "images/icon.png",
   "license": "MIT",
@@ -154,10 +154,36 @@
               "defaultModel": {
                 "type": "string",
                 "markdownDescription": "%config.engines.defaultModel%"
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^https?://",
+                "markdownDescription": "%config.engines.url%"
+              },
+              "contextWindow": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 8192,
+                "markdownDescription": "%config.engines.contextWindow%"
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 4096,
+                "markdownDescription": "%config.engines.maxOutputTokens%"
               }
             },
-            "required": [
-              "command"
+            "anyOf": [
+              {
+                "required": [
+                  "command"
+                ]
+              },
+              {
+                "required": [
+                  "url"
+                ]
+              }
             ]
           },
           "markdownDescription": "%config.engines%"
@@ -321,6 +347,11 @@
         "category": "Smart PR Review"
       },
       {
+        "command": "smartPrReview.setEngineApiKey",
+        "title": "%command.setEngineApiKey%",
+        "category": "Smart PR Review"
+      },
+      {
         "command": "smartPrReview.createDraft",
         "title": "%command.createDraft%"
       },
@@ -472,6 +503,10 @@
         {
           "command": "smartPrReview.setAzureDevOpsPat",
           "when": "smartPrReview.provider == azureDevOps || smartPrReview.provider == azureDevOpsServer"
+        },
+        {
+          "command": "smartPrReview.setEngineApiKey",
+          "when": "smartPrReview.provider"
         },
         {
           "command": "smartPrReview.refresh",

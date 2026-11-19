@@ -35,7 +35,7 @@
   "command.setAzureDevOpsPat": "Set Azure DevOps Personal Access Token",
   "config.allowApproval": "Offer the approving votes (*Approve*, and on Azure DevOps *Approve with suggestions*) when publishing a review. Off by default so a pull request is never approved from VS Code by mistake. Only user settings count: a repository cannot turn it on.",
   "config.defaultEngine": "Engine preselected by **Review with AI**: `copilot` (GitHub Copilot in VS Code) or a key of `#smartPrReview.engines#`.",
-  "config.engines": "Command-line AI engines. Each one gets the prompt on stdin, runs in a read-only worktree of the pull request and answers on stdout. The defaults keep Claude Code (restricted: no project hooks, settings or MCP servers), Codex (medium reasoning effort) and Cursor read-only and without web access; entries you add are merged with them. An engine with `modelArg` asks for the model on every review. Machine-scoped: a repository cannot change it.",
+  "config.engines": "AI engines. An entry with `command` is a command-line engine: it gets the prompt on stdin, runs in a read-only worktree of the pull request and answers on stdout. The defaults keep Claude Code (restricted: no project hooks, settings or MCP servers), Codex (medium reasoning effort) and Cursor read-only and without web access; entries you add are merged with them. An engine with `modelArg` asks for the model on every review. An entry with `url` is a server with the OpenAI chat completions API (Ollama, LM Studio, vLLM, llama.cpp, OpenRouter…): it gets the changed files in the prompt and asks for the model on every review; set its API key, if it needs one, with **Set API Key of an AI Engine**. Machine-scoped: a repository cannot change it.",
   "config.engines.modelArg": "Flag of the command that selects the model, for example `--model`. With it, **Review with AI** asks for the model and appends the flag and the model to `args`.",
   "config.engines.models": "Models to offer when the review asks for one.",
   "config.engines.listModelsArgs": "Arguments that make the command print its models, one per line as `id` or `id - name`; they are added to the ones offered.",
@@ -48,5 +48,9 @@
   "command.createProfile": "Create Review Profile…",
   "welcome.noPullRequest": "No pull request is being reviewed. Pick one in **Pull Requests**, or search by number, title or author.\n[Search Pull Requests](command:smartPrReview.searchPullRequests)",
   "command.createWorktree": "Create Review Worktree",
-  "command.manageWorktrees": "Review Worktrees…"
+  "command.manageWorktrees": "Review Worktrees…",
+  "config.engines.url": "Base URL of an OpenAI-compatible API, the part before `/chat/completions`, for example `http://localhost:11434/v1` (Ollama) or `http://localhost:1234/v1` (LM Studio). The pull request changes are sent there. Use it instead of `command`.",
+  "config.engines.contextWindow": "Tokens the server takes per request, prompt and answer together: the context length the model was loaded with (`OLLAMA_CONTEXT_LENGTH` or `num_ctx` in Ollama, *Context Length* in LM Studio, `-c` in llama.cpp). A value above the server's lets it cut the prompt without notice. Only for engines with `url`.",
+  "config.engines.maxOutputTokens": "Tokens of `contextWindow` kept for the answer, sent as `max_tokens`. Reasoning models spend them thinking too: give them room (for example 32768) or turn their reasoning down. Only for engines with `url`.",
+  "command.setEngineApiKey": "Set API Key of an AI Engine"
 }

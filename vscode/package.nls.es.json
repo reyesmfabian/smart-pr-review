@@ -35,7 +35,7 @@
   "command.setAzureDevOpsPat": "Configurar token de acceso personal de Azure DevOps",
   "config.allowApproval": "Ofrecer los votos que aprueban (*Aprobar* y, en Azure DevOps, *Aprobar con sugerencias*) al publicar una revisión. Desactivado por defecto para que nunca se apruebe un pull request desde VS Code por error. Solo cuenta la configuración de usuario: un repositorio no puede activarlo.",
   "config.defaultEngine": "Engine preseleccionado en **Revisar con IA**: `copilot` (GitHub Copilot en VS Code) o una clave de `#smartPrReview.engines#`.",
-  "config.engines": "Engines de IA por línea de comandos. Cada uno recibe el prompt por stdin, se ejecuta en un worktree de solo lectura del pull request y responde por stdout. Los predeterminados mantienen Claude Code (restringido: sin hooks, settings ni servidores MCP del proyecto), Codex (esfuerzo de razonamiento medio) y Cursor en solo lectura y sin acceso web; las entradas que agregues se combinan con ellos. Un engine con `modelArg` pregunta el modelo en cada revisión. De ámbito de máquina: un repositorio no puede cambiarlo.",
+  "config.engines": "Engines de IA. Una entrada con `command` es un engine por línea de comandos: recibe el prompt por stdin, se ejecuta en un worktree de solo lectura del pull request y responde por stdout. Los predeterminados mantienen Claude Code (restringido: sin hooks, settings ni servidores MCP del proyecto), Codex (esfuerzo de razonamiento medio) y Cursor en solo lectura y sin acceso web; las entradas que agregues se combinan con ellos. Un engine con `modelArg` pregunta el modelo en cada revisión. Una entrada con `url` es un servidor con la API de chat completions de OpenAI (Ollama, LM Studio, vLLM, llama.cpp, OpenRouter…): recibe los archivos cambiados en el prompt y pregunta el modelo en cada revisión; su API key, si la necesita, se configura con **Configurar API key de un engine de IA**. De ámbito de máquina: un repositorio no puede cambiarlo.",
   "config.engines.modelArg": "Opción del comando que elige el modelo, por ejemplo `--model`. Con ella, **Revisar con IA** pregunta el modelo y agrega la opción y el modelo a `args`.",
   "config.engines.models": "Modelos que se ofrecen cuando la revisión pregunta por uno.",
   "config.engines.listModelsArgs": "Argumentos con los que el comando imprime sus modelos, uno por línea como `id` o `id - nombre`; se suman a los que se ofrecen.",
@@ -48,5 +48,9 @@
   "command.createProfile": "Crear perfil de revisión…",
   "welcome.noPullRequest": "No hay ningún pull request en revisión. Elige uno en **Pull Requests**, o búscalo por número, título o autor.\n[Buscar pull requests](command:smartPrReview.searchPullRequests)",
   "command.createWorktree": "Crear worktree de revisión",
-  "command.manageWorktrees": "Worktrees de revisión…"
+  "command.manageWorktrees": "Worktrees de revisión…",
+  "config.engines.url": "URL base de una API compatible con OpenAI, la parte antes de `/chat/completions`, por ejemplo `http://localhost:11434/v1` (Ollama) o `http://localhost:1234/v1` (LM Studio). Los cambios del pull request se envían ahí. Se usa en lugar de `command`.",
+  "config.engines.contextWindow": "Tokens que el servidor acepta por petición, sumando prompt y respuesta: la longitud de contexto con la que se cargó el modelo (`OLLAMA_CONTEXT_LENGTH` o `num_ctx` en Ollama, *Context Length* en LM Studio, `-c` en llama.cpp). Un valor mayor que el del servidor le permite recortar el prompt sin avisar. Solo para engines con `url`.",
+  "config.engines.maxOutputTokens": "Tokens de `contextWindow` reservados para la respuesta, enviados como `max_tokens`. Los modelos que razonan también los gastan pensando: dales margen (por ejemplo 32768) o baja su razonamiento. Solo para engines con `url`.",
+  "command.setEngineApiKey": "Configurar API key de un engine de IA"
 }

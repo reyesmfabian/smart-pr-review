@@ -50,7 +50,7 @@ export interface PromptContext {
   language: string;
   title: string;
   description: string;
-  /** Full new files, for engines that cannot read the repository (Copilot). */
+  /** Full new files, for engines that cannot read the repository (Copilot, URL engines). */
   contents?: ReadonlyMap<string, string>;
 }
 

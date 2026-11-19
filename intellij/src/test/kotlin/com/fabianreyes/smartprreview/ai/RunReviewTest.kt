@@ -10,6 +10,7 @@ import com.fabianreyes.smartprreview.remote.ProviderKind
 import com.fabianreyes.smartprreview.remote.RemoteInfo
 import com.fabianreyes.smartprreview.review.MemoryStore
 import com.fabianreyes.smartprreview.review.ReviewSession
+import com.google.gson.JsonParser
 import com.intellij.openapi.progress.EmptyProgressIndicator
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.util.Disposer
@@ -142,7 +143,7 @@ class RunReviewTest : BasePlatformTestCase() {
     private fun profile(name: String, include: List<String> = emptyList(), exclude: List<String> = emptyList()) =
         Profile(name, "", include, exclude, "Look for bugs.", Profile.Source.REPOSITORY, false)
 
-    private fun options(engine: Engine, vararg profiles: Profile, indicator: ProgressIndicator? = null, timeoutMs: Long = 20_000, labelComments: Boolean = true) =
+    private fun options(engine: ReviewEngine, vararg profiles: Profile, indicator: ProgressIndicator? = null, timeoutMs: Long = 20_000, labelComments: Boolean = true) =
         AiReviewOptions(session, session.require(), profiles.toList(), engine, storage.resolve("worktrees"), timeoutMs, labelComments, "Spanish", indicator)
 
     private fun worktreeCount() = git.run("worktree", "list").trim().lines().size
@@ -193,6 +194,21 @@ class RunReviewTest : BasePlatformTestCase() {
         assertTrue(listing.toString(), "./src/new file.ts" in listing)
         assertFalse(listing.toString(), "./untracked.txt" in listing)
         assertNoWorktrees()
+    }
+
+    fun testAUrlEngineGetsTheNewFilesInThePromptAndNoWorktreeIsMade() {
+        FakeChatServer { completion(answer) }.use { server ->
+            val result = runAiReview(options(UrlEngine("qwen", "qwen3.8-27b", server.url, 32768, 4096, null), profile("Security", listOf("src/**"))))
+            assertEquals(AiReviewResult(1, listOf("Security"), emptyList()), result)
+            assertEquals(DraftOrigin.Ai("Security", "qwen (qwen3.8-27b)", DraftOrigin.Severity.ERROR), session.require().drafts.all().single().origin)
+            val prompt = JsonParser.parseString(server.requests.single().body).asJsonObject["messages"].asJsonArray[0].asJsonObject["content"].asString
+            assertTrue(prompt, prompt.contains("## New version of src/app.ts\n\n```\n1| line 1\n"))
+            assertTrue(prompt, prompt.contains("\n5| changed line 5\n"))
+            assertTrue(prompt, prompt.contains("## New version of src/new file.ts"))
+            // It cannot read the repository, so no worktree is made for it.
+            assertFalse(storage.resolve("worktrees").exists())
+            assertEquals(1, worktreeCount())
+        }
     }
 
     fun testWithoutLabelsNeitherTheCommentsNorTheSummaryNameTheProfileOrEngine() {

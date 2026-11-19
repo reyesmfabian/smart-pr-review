@@ -62,6 +62,7 @@
     <action id="SmartPrReview.PrepareReview" class="com.fabianreyes.smartprreview.ui.actions.PrepareReviewAction"/>
     <action id="SmartPrReview.ReviewWithAi" class="com.fabianreyes.smartprreview.ai.AiReviewAction"/>
     <action id="SmartPrReview.CreateProfile" class="com.fabianreyes.smartprreview.ai.CreateProfileAction"/>
+    <action id="SmartPrReview.SetEngineApiKey" class="com.fabianreyes.smartprreview.ai.SetEngineApiKeyAction"/>
     <action id="SmartPrReview.ExitReview" class="com.fabianreyes.smartprreview.ui.actions.ExitReviewAction"/>
     <action id="SmartPrReview.DiscardDrafts" class="com.fabianreyes.smartprreview.ui.actions.DiscardDraftsAction"/>
     <action id="SmartPrReview.AddDraft" class="com.fabianreyes.smartprreview.ui.diff.AddDraftAction">

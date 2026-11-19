@@ -14,6 +14,11 @@ import com.intellij.openapi.components.service
  * selects the model, e.g. "--model") the review asks for a model and appends the flag and the model to [args]:
  * [models] are offered, plus the ones the command prints with [listModelsArgs] (one per line, "id" or "id - name"),
  * and [defaultModel] comes first until another one is picked.
+ *
+ * With [url] it is a server with the OpenAI chat completions API instead (Ollama, LM Studio, vLLM, llama.cpp,
+ * OpenRouter…) and `command` is empty: the review always asks for a model, of [models] plus the ones the server
+ * lists. [contextWindow] is the tokens the server takes per request, prompt and answer together; [maxOutputTokens]
+ * of them are kept for the answer (reasoning included) and sent as max_tokens.
  */
 data class Engine(
     val command: String,
@@ -22,7 +27,13 @@ data class Engine(
     val models: List<String> = emptyList(),
     val listModelsArgs: List<String> = emptyList(),
     val defaultModel: String? = null,
+    val url: String? = null,
+    val contextWindow: Int = DEFAULT_CONTEXT_WINDOW,
+    val maxOutputTokens: Int = DEFAULT_MAX_OUTPUT_TOKENS,
 )
+
+const val DEFAULT_CONTEXT_WINDOW = 8192
+const val DEFAULT_MAX_OUTPUT_TOKENS = 4096
 
 /** Machine-wide settings: the same fields and defaults as the VS Code `smartPrReview.*` settings. */
 @Service
@@ -88,14 +99,41 @@ class SmartPrReviewSettings : PersistentStateComponent<SmartPrReviewSettings.Sta
             val models: List<String>? = null,
             val listModelsArgs: List<String>? = null,
             val defaultModel: String? = null,
+            val url: String? = null,
+            val contextWindow: Int? = null,
+            val maxOutputTokens: Int? = null,
         )
 
-        /** Parses the user's engines JSON ({"key": {"command": "...", "args": [...], "modelArg": "--model", ...}}); the failure names the problem. */
+        private fun isHttpUrl(value: String) = try {
+            java.net.URI(value).let { (it.scheme == "http" || it.scheme == "https") && !it.host.isNullOrEmpty() }
+        } catch (_: java.net.URISyntaxException) {
+            false
+        }
+
+        /** An engine reached by URL; the failure says what to fix. */
+        private fun urlEngine(key: String, engine: EngineJson, url: String): Engine {
+            require(isHttpUrl(url)) { "engine \"$key\": url must start with http:// or https://" }
+            val window = engine.contextWindow ?: DEFAULT_CONTEXT_WINDOW
+            val output = engine.maxOutputTokens ?: DEFAULT_MAX_OUTPUT_TOKENS
+            require(window > 0 && output > 0) { "engine \"$key\": contextWindow and maxOutputTokens must be positive" }
+            require(output < window) { "engine \"$key\": maxOutputTokens ($output) leaves no room for the prompt in contextWindow ($window)" }
+            return Engine(
+                "", models = engine.models ?: emptyList(), defaultModel = engine.defaultModel?.takeIf { it.isNotBlank() },
+                url = url, contextWindow = window, maxOutputTokens = output,
+            )
+        }
+
+        /**
+         * Parses the user's engines JSON ({"key": {"command": "...", "args": [...], "modelArg": "--model", ...}}, or
+         * {"key": {"url": "http://...", "contextWindow": 32768, ...}}); the failure names the problem.
+         */
         fun parseEngines(json: String): Result<Map<String, Engine>> = runCatching {
             val type = object : TypeToken<Map<String, EngineJson?>>() {}.type
             val parsed: Map<String, EngineJson?> = Gson().fromJson(json.ifBlank { "{}" }, type) ?: emptyMap()
             parsed.mapValues { (key, engine) ->
-                val command = engine?.command?.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("engine \"$key\" needs a command")
+                val url = engine?.url?.takeIf { it.isNotBlank() }
+                if (engine != null && url != null) return@mapValues urlEngine(key, engine, url)
+                val command = engine?.command?.takeIf { it.isNotBlank() } ?: throw IllegalArgumentException("engine \"$key\" needs a command or a url")
                 Engine(
                     command, engine.args ?: emptyList(), engine.modelArg?.takeIf { it.isNotBlank() }, engine.models ?: emptyList(),
                     engine.listModelsArgs ?: emptyList(), engine.defaultModel?.takeIf { it.isNotBlank() },

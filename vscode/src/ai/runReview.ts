@@ -12,12 +12,14 @@ import { buildPrompt, parseReviewOutput, placeFindings, type ReviewOutput } from
 export type Engine =
   /** `model` is the one picked for this review (already in `args`); without it the CLI uses its own default. */
   | { kind: "cli"; id: string; executable: string; args: readonly string[]; model?: string }
-  | { kind: "copilot"; id: "copilot"; model: ChatModel };
+  | { kind: "copilot"; id: "copilot"; model: ChatModel }
+  /** An engine of smartPrReview.engines reached by URL. */
+  | { kind: "url"; id: string; model: ChatModel };
 
 /** How the engine is named in progress, summaries and comment footers. */
 export function engineLabel(engine: Engine): string {
-  if (engine.kind === "copilot") {
-    return `copilot (${engine.model.name})`;
+  if (engine.kind !== "cli") {
+    return `${engine.id} (${engine.model.name})`;
   }
   return engine.model ? `${engine.id} (${engine.model})` : engine.id;
 }
@@ -252,7 +254,7 @@ async function reviewWithProfile(o: AiReviewOptions, profile: Profile, worktree:
     o.log.trace(`Prompt for ${profile.name}:\n${prompt}`);
     return parse(await runCli(o.engine.executable, o.engine.args, prompt, worktree ?? root, o.token, o.timeoutMs));
   }
-  // Copilot cannot read the repository: it gets the new version of each file too, in parts that fit its window.
+  // Copilot and URL engines cannot read the repository: they get the new version of each file too, in parts that fit the window.
   const model = o.engine.model;
   const { prompts, skipped } = await promptsWithinLimit(
     model,

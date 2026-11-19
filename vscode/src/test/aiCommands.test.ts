@@ -4,8 +4,9 @@ import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   aiLanguage,
+  aiEngines,
   aiTimeoutMs,
-  cliEngines,
+  apiKeySecret,
   cliModelChoices,
   describeFailures,
   installGuide,
@@ -17,7 +18,7 @@ import {
 import { parseProfile } from "../ai/profiles";
 import { DraftComment } from "../review/comments";
 import { ReviewSession } from "../review/session";
-import { FakeProvider, memento } from "./fakes";
+import { FakeProvider, memento, secrets } from "./fakes";
 import { makeRepo } from "./repo";
 
 suite("AI commands", () => {
@@ -28,9 +29,9 @@ suite("AI commands", () => {
     const extension = join(__dirname, "../..");
     let firstDone = false;
     // The first one waits on its profile picker.
-    const first = reviewWithAi(session, extension, tmpdir(), memento()).then(() => (firstDone = true));
+    const first = reviewWithAi(session, extension, tmpdir(), memento(), secrets()).then(() => (firstDone = true));
     await new Promise((resolve) => setTimeout(resolve, 500));
-    await reviewWithAi(session, extension, tmpdir(), memento());
+    await reviewWithAi(session, extension, tmpdir(), memento(), secrets());
     assert.strictEqual(firstDone, false);
     await vscode.commands.executeCommand("workbench.action.closeQuickOpen");
     await first;
@@ -38,7 +39,7 @@ suite("AI commands", () => {
   });
 
   test("keeps the bundled engines next to the ones the user adds or overrides", () => {
-    const engines = cliEngines({
+    const engines = aiEngines({
       defaultValue: { claude: { command: "claude", args: ["-p"] }, codex: { command: "codex" } },
       globalValue: {
         codex: { command: "/opt/codex", args: ["exec"] },
@@ -55,7 +56,7 @@ suite("AI commands", () => {
   });
 
   test("reads the model options of an engine, leaving out the malformed ones without losing the engine", () => {
-    const engines = cliEngines({
+    const engines = aiEngines({
       defaultValue: {
         cursor: { command: "cursor-agent", args: ["-p"], modelArg: "--model", listModelsArgs: ["models"], defaultModel: "auto" },
         claude: { command: "claude", modelArg: "--model", models: ["sonnet", "--dangerous", "two words", "opus"] },
@@ -67,6 +68,29 @@ suite("AI commands", () => {
       claude: { command: "claude", args: undefined, modelArg: "--model", models: ["sonnet", "opus"] },
       mine: { command: "mine", args: undefined },
     });
+  });
+
+  test("reads engines reached by URL, with the default window and answer budget when theirs are missing or malformed", () => {
+    const engines = aiEngines({
+      globalValue: {
+        qwen: { url: "http://192.168.1.50:1234/v1/", contextWindow: 262144, maxOutputTokens: 32768, models: ["qwen3.8-27b", "two words"] },
+        ollama: { url: "http://localhost:11434/v1", contextWindow: "big", maxOutputTokens: -1, defaultModel: "qwen2.5-coder:14b" },
+        // url wins over command: the entry is a server.
+        both: { url: "https://openrouter.ai/api/v1", command: "x" },
+        ftp: { url: "ftp://host/v1" },
+        relative: { url: "localhost:1234/v1" },
+      },
+    });
+    assert.deepStrictEqual(engines, {
+      qwen: { url: "http://192.168.1.50:1234/v1/", contextWindow: 262144, maxOutputTokens: 32768, models: ["qwen3.8-27b"] },
+      ollama: { url: "http://localhost:11434/v1", contextWindow: 8192, maxOutputTokens: 4096, defaultModel: "qwen2.5-coder:14b" },
+      both: { url: "https://openrouter.ai/api/v1", contextWindow: 8192, maxOutputTokens: 4096 },
+    });
+  });
+
+  test("keeps the API key of a URL engine per URL, so editing the URL never sends it to another server", () => {
+    assert.strictEqual(apiKeySecret({ url: "http://localhost:1234/v1/" }), apiKeySecret({ url: "http://localhost:1234/v1" }));
+    assert.notStrictEqual(apiKeySecret({ url: "http://localhost:1234/v1" }), apiKeySecret({ url: "http://192.168.1.50:1234/v1" }));
   });
 
   test("offers the model picked last first, then the CLI's own default, then the engine's and the listed models", () => {

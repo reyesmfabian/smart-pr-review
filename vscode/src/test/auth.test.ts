@@ -1,23 +1,7 @@
 import * as assert from "node:assert/strict";
-import * as vscode from "vscode";
 import { AzureDevOpsAuth, githubAuth, httpConsent, type MicrosoftToken, recoveryActions } from "../auth";
 import { HttpError } from "../http";
-import { memento } from "./fakes";
-
-function secrets(initial: Record<string, string> = {}): vscode.SecretStorage {
-  const data = new Map(Object.entries(initial));
-  const changed = new vscode.EventEmitter<vscode.SecretStorageChangeEvent>();
-  return {
-    get: async (key: string) => data.get(key),
-    store: async (key: string, value: string) => {
-      data.set(key, value);
-    },
-    delete: async (key: string) => {
-      data.delete(key);
-    },
-    onDidChange: changed.event,
-  } as unknown as vscode.SecretStorage;
-}
+import { memento, secrets } from "./fakes";
 
 /** Microsoft session stub that records how it was asked. */
 function microsoft(token: string | undefined) {

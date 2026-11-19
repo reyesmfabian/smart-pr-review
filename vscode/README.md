@@ -76,6 +76,20 @@ Command-line engines run in a temporary worktree of the pull request, get the pr
 
 The pull request content is untrusted, so give your engine the flags that stop it from writing files, running commands and browsing the web, and check that they hold in a folder the CLI has never seen: some CLIs drop their read-only mode in folders they do not trust.
 
+**Local and hosted models by URL** — an entry with `url` instead of `command` reviews with any server that speaks the OpenAI chat completions API: Ollama, LM Studio, vLLM, llama.cpp, LiteLLM or OpenRouter, on your machine, on your network or online. Like Copilot, it gets the diff and the new version of each file, split into parts that fit the model:
+
+```json
+"smartPrReview.engines": {
+  "qwen-local": { "url": "http://192.168.1.50:1234/v1", "contextWindow": 262144, "maxOutputTokens": 32768 },
+  "ollama": { "url": "http://localhost:11434/v1", "models": ["qwen2.5-coder:14b"] }
+}
+```
+
+- `url` is the base of the API, the part before `/chat/completions`. The review asks for the model on every review, offering `models` and the ones the server lists.
+- `contextWindow` (default 8192) is the context length the server loaded the model with, prompt and answer together: `OLLAMA_CONTEXT_LENGTH` or `num_ctx` in Ollama, *Context Length* in LM Studio, `-c` in llama.cpp. Set it to the server's value: a larger one lets the server cut the prompt without notice.
+- `maxOutputTokens` (default 4096) is the part of it kept for the answer, sent as `max_tokens`. Reasoning models spend it thinking too, so give them room (for example 32768) or turn their reasoning down: an answer cut short fails with a message that says so.
+- If the server needs an API key, set it with **Set API Key of an AI Engine**. It is kept in VS Code's secret storage under the URL, so it is never sent to another server, even if you change the URL.
+
 ## Requirements
 
 - Git installed and the repository cloned and opened in VS Code.
@@ -92,7 +106,7 @@ The extension reviews pull requests of the `upstream` remote when it exists (for
 | `smartPrReview.azureDevOps.hosts` | Azure DevOps Server host names (e.g. `tfs.contoso.com`). Machine-scoped: a repository cannot change it. |
 | `smartPrReview.allowApproval` | Offer *Approve* (and on Azure DevOps *Approve with suggestions*) when publishing. Off by default so nothing is approved from VS Code by mistake; only your user settings can turn it on. |
 | `smartPrReview.defaultEngine` | Engine preselected by **Review with AI**: `copilot` or a key of `smartPrReview.engines`. |
-| `smartPrReview.engines` | Command-line engines (`command` + `args`). Machine-scoped. |
+| `smartPrReview.engines` | Command-line engines (`command` + `args`) and OpenAI-compatible servers (`url`, `contextWindow`, `maxOutputTokens`). Machine-scoped. |
 | `smartPrReview.profilesPath` | Folder of the review profiles, inside the repository. Default `.smart-review/profiles`. |
 | `smartPrReview.ai.language` | Language of the AI comments and summary (e.g. `Spanish`). Empty: the language of the pull request, or VS Code's when unclear. |
 | `smartPrReview.ai.timeoutMinutes` | Minutes an engine may take per profile, from 1 to 1440. Default 10. |
@@ -103,7 +117,7 @@ The extension reviews pull requests of the `upstream` remote when it exists (for
 - Tokens are managed by VS Code's authentication providers or stored in VS Code's secret storage (Azure DevOps personal access tokens, one per host). They are never written to settings or logs, and Microsoft tokens are only sent to dev.azure.com. An Azure DevOps Server reached over plain HTTP gets your personal access token only after you accept it once for that server, since HTTP does not encrypt it.
 - Pull request titles, descriptions and comments are rendered as untrusted content: no scripts, no command links.
 - In untrusted workspaces (Restricted Mode) the extension stays disabled: reviewing runs git, and a repository's git configuration can make git run programs.
-- AI engines treat the pull request as untrusted: the prompt says so, and every finding is a draft you review before anything is published. Command-line engines run in a temporary worktree of the pull request without the repository's git hooks and without its agent configuration (`.claude/`, `.cursor/`, `.codex/`, `.gemini/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`… are removed before the engine starts, in any letter case), so the pull request cannot give the engine hooks, MCP servers or instructions. Its symbolic links are removed too, so none can pass a file outside the worktree off as part of the pull request. The bundled engines run read-only without web tools. Read-only does not stop an engine from *reading* files outside the worktree; review the drafts before publishing.
+- AI engines treat the pull request as untrusted: the prompt says so, and every finding is a draft you review before anything is published. Command-line engines run in a temporary worktree of the pull request without the repository's git hooks and without its agent configuration (`.claude/`, `.cursor/`, `.codex/`, `.gemini/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`… are removed before the engine starts, in any letter case), so the pull request cannot give the engine hooks, MCP servers or instructions. Its symbolic links are removed too, so none can pass a file outside the worktree off as part of the pull request. The bundled engines run read-only without web tools. Read-only does not stop an engine from *reading* files outside the worktree; review the drafts before publishing. An engine with `url` gets the changed files in its prompt and nothing else; the pull request content goes to that URL, over plain HTTP if the URL says `http://`.
 - Engine commands are machine-scoped settings, and the profiles folder must be inside the repository: a repository cannot make the extension run a program or read files outside it.
 
 ## License
@@ -123,4 +137,4 @@ run this from the repository's `vscode/` folder after `npm ci`:
 SPR_UI_PREVIEW=1 npm test
 ```
 
-Close the review navigator to finish the demo. Normal `npm test` runs the regression suite, not the interactive preview. To try a real repository, open this repository's root in VS Code, use **Run Extension** (F5), open the target repository in the Extension Development Host and choose **Open Review Window** on a PR.
+Close the review navigator to finish the demo. With `SPR_UI_PREVIEW=ai npm test` the demo pull request has real bugs and **Review with AI** calls the engine you pick: set it in that window's user settings (`smartPrReview.engines`) to try a local model without a GitHub or Azure DevOps pull request. Normal `npm test` runs the regression suite, not the interactive preview. To try a real repository, open this repository's root in VS Code, use **Run Extension** (F5), open the target repository in the Extension Development Host and choose **Open Review Window** on a PR.

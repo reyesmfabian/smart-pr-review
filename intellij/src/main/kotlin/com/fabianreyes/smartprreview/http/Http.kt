@@ -52,8 +52,11 @@ object Http {
      * Sends `request` and parses the JSON body; null for an empty body (e.g. 204). Throws HttpError on
      * non-2xx. Never logs headers (they carry tokens). Blocking: never call on the EDT.
      */
-    fun requestJson(request: HttpRequest): JsonElement? {
-        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+    fun requestJson(request: HttpRequest): JsonElement? = parseResponse(client.send(request, HttpResponse.BodyHandlers.ofString()))
+
+    /** What [requestJson] does with the response, for callers that send asynchronously (to stop a long request). */
+    fun parseResponse(response: HttpResponse<String>): JsonElement? {
+        val request = response.request()
         LOG.debug { "${request.method()} ${request.uri()} → ${response.statusCode()}" }
         val headers = response.headers().map().mapValues { it.value.joinToString(", ") }
         // Azure DevOps answers rejected credentials with 203 and an HTML sign-in page; a proxy or SSO in front
@@ -67,7 +70,10 @@ object Http {
     }
 }
 
-/** `message` plus `errors[].message` (GitHub) joined with " — "; a non-JSON body is quoted up to 200 chars. */
+/**
+ * `message` plus `errors[].message` (GitHub) joined with " — ", or the `error` of OpenAI-compatible servers
+ * (`{"error": {"message": ...}}` or `{"error": "..."}`); a non-JSON body is quoted up to 200 chars.
+ */
 internal fun errorMessage(text: String): String {
     val body = try {
         JsonParser.parseString(text)
@@ -80,7 +86,8 @@ internal fun errorMessage(text: String): String {
     val details = obj.get("errors")?.takeIf { it.isJsonArray }?.asJsonArray
         ?.map { e -> if (e.isJsonObject) string(e.asJsonObject.get("message")) else string(e) }
         ?: emptyList()
-    return (listOf(string(obj.get("message"))) + details).filterNotNull().filter { it.isNotEmpty() }.joinToString(" — ")
+    val error = obj.get("error")?.let { if (it.isJsonObject) string(it.asJsonObject.get("message")) else string(it) }
+    return (listOf(string(obj.get("message")), error) + details).filterNotNull().filter { it.isNotEmpty() }.joinToString(" — ")
 }
 
 /** The user-facing text of an error: translated for HttpError, the message itself otherwise. */

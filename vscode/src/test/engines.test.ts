@@ -9,13 +9,16 @@ import {
   findExecutable,
   isModelName,
   listCliModels,
+  listUrlModels,
   parseModelList,
   promptsWithinLimit,
   runChat,
   runCli,
+  urlChatModel,
   windowsCommandLine,
 } from "../ai/engines";
 import { fakeModel } from "./fakes";
+import { stubFetch } from "./fetch";
 
 /** A Node script used as a CLI engine. */
 async function script(source: string): Promise<{ dir: string; path: string }> {
@@ -178,6 +181,90 @@ suite("AI engines", () => {
     const cancellation = new vscode.CancellationTokenSource();
     setTimeout(() => cancellation.cancel(), 20);
     await assert.rejects(runChat(quitter, "p", cancellation.token, 10_000), (e: unknown) => e instanceof vscode.CancellationError);
+  });
+
+  test("URL engines: sends the prompt with the model, max_tokens and the API key, and returns the answer without its reasoning", async () => {
+    const json = '```json\n{"summary":"ok","findings":[]}\n```';
+    const fetch = stubFetch(() => ({ body: { choices: [{ message: { content: `<think>maybe { this</think>\n${json}` }, finish_reason: "stop" }] } }));
+    try {
+      const model = urlChatModel({ url: "http://192.168.1.50:1234/v1/", contextWindow: 32768, maxOutputTokens: 8192 }, "qwen3.8-27b", "secret");
+      // The window minus what is kept for the answer; tokens estimated at 3 characters each.
+      assert.strictEqual(model.maxInputTokens, 24576);
+      assert.strictEqual(await model.countTokens("x".repeat(30)), 10);
+      assert.strictEqual(await runChat(model, "the prompt", new vscode.CancellationTokenSource().token, 10_000), `\n${json}`);
+      assert.strictEqual(fetch.calls[0].url, "http://192.168.1.50:1234/v1/chat/completions");
+      assert.strictEqual(fetch.calls[0].init.method, "POST");
+      assert.strictEqual((fetch.calls[0].init.headers as Record<string, string>).authorization, "Bearer secret");
+      assert.deepStrictEqual(fetch.body(0), {
+        model: "qwen3.8-27b",
+        messages: [{ role: "user", content: "the prompt" }],
+        max_tokens: 8192,
+        stream: false,
+      });
+    } finally {
+      fetch.restore();
+    }
+  });
+
+  test("URL engines: says why an answer was cut, a key rejected, a request refused or a server misread, naming the server", async () => {
+    const engine = { url: "http://localhost:1234/v1", contextWindow: 8192, maxOutputTokens: 4096 };
+    const token = new vscode.CancellationTokenSource().token;
+    const answers = [
+      { body: { choices: [{ message: { content: "<think>still thinking" }, finish_reason: "length" }] } },
+      { status: 401, body: { error: { message: "Invalid API key" } } },
+      { status: 404, body: { error: "model 'nope' not found" } },
+      { body: { ok: true } },
+    ];
+    const fetch = stubFetch(() => {
+      const answer = answers.shift();
+      if (!answer) {
+        // What fetch throws when nothing listens on the port.
+        throw new TypeError("fetch failed", { cause: new Error("connect ECONNREFUSED 127.0.0.1:1234") });
+      }
+      return answer;
+    });
+    const review = (model: string, apiKey?: string) => runChat(urlChatModel(engine, model, apiKey), "p", token, 10_000);
+    try {
+      await assert.rejects(review("m"), /used up maxOutputTokens \(4096\)/);
+      await assert.rejects(review("m", "bad"), /localhost:1234\/v1 rejected the API key \(HTTP 401\)/);
+      await assert.rejects(review("nope"), /answered HTTP 404: model 'nope' not found/);
+      await assert.rejects(review("m"), /did not answer like an OpenAI-compatible API/);
+      await assert.rejects(review("m"), /Could not reach http:\/\/localhost:1234\/v1: connect ECONNREFUSED/);
+    } finally {
+      fetch.restore();
+    }
+  });
+
+  test("URL engines: a request that takes longer than the timeout is stopped", async () => {
+    const original = globalThis.fetch;
+    let aborted = false;
+    globalThis.fetch = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) =>
+        init.signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(new DOMException("aborted", "AbortError"));
+        }),
+      )) as typeof fetch;
+    try {
+      const model = urlChatModel({ url: "http://localhost:1234/v1", contextWindow: 8192, maxOutputTokens: 4096 }, "m", undefined);
+      await assert.rejects(runChat(model, "p", new vscode.CancellationTokenSource().token, 200), /did not answer/);
+      assert.strictEqual(aborted, true);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test("URL engines: lists the models of the server, sending no key when there is none", async () => {
+    const fetch = stubFetch(() => ({ body: { object: "list", data: [{ id: "qwen3.8-27b" }, { id: "openai/gpt-oss-20b" }, { id: "--bad" }, {}, null] } }));
+    try {
+      const engine = { url: "http://localhost:1234/v1", contextWindow: 8192, maxOutputTokens: 4096 };
+      const models = await listUrlModels(engine, undefined, new vscode.CancellationTokenSource().token, 10_000);
+      assert.deepStrictEqual(models, [{ id: "qwen3.8-27b" }, { id: "openai/gpt-oss-20b" }]);
+      assert.strictEqual(fetch.calls[0].url, "http://localhost:1234/v1/models");
+      assert.strictEqual((fetch.calls[0].init.headers as Record<string, string>).authorization, undefined);
+    } finally {
+      fetch.restore();
+    }
   });
 
   test("on Windows, also finds commands given with their extension and prefers PATHEXT over extensionless shims", async () => {

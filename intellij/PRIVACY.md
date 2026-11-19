@@ -27,6 +27,12 @@ CLI separately. Do not run an AI review if you are not authorized to share the
 repository with the selected provider. CLI tools may access additional files
 according to their permissions; the plugin does not sandbox third-party CLIs.
 
+An engine configured with a URL instead receives the review prompt, the changed
+files and pull request information directly from the plugin, sent to that URL:
+a model server on your machine or network, or an online service. Its API key, if
+any, is stored in the IDE's PasswordSafe under that URL. The plugin sends no
+other repository files to it.
+
 ## Local storage and deletion
 
 The IDE stores plugin settings, local drafts, viewed-file state and worktree
@@ -41,7 +47,7 @@ CLI logs are governed by those applications' settings.
 
 The plugin does not operate a separate analytics or telemetry backend and does
 not send repository data to its author. Requests to repository services and
-user-configured CLI services are necessary for the features described above.
+user-configured CLI services or engine URLs are necessary for the features described above.
 
 For questions, use the public issue tracker:
 https://github.com/reyesmfabian/smart-pr-review/issues.

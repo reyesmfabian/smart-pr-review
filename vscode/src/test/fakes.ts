@@ -14,6 +14,21 @@ export function memento(): vscode.Memento {
   } as vscode.Memento;
 }
 
+export function secrets(initial: Record<string, string> = {}): vscode.SecretStorage {
+  const data = new Map(Object.entries(initial));
+  const changed = new vscode.EventEmitter<vscode.SecretStorageChangeEvent>();
+  return {
+    get: async (key: string) => data.get(key),
+    store: async (key: string, value: string) => {
+      data.set(key, value);
+    },
+    delete: async (key: string) => {
+      data.delete(key);
+    },
+    onDidChange: changed.event,
+  } as unknown as vscode.SecretStorage;
+}
+
 /** In-memory provider for the pull request created by makeRepo(). */
 export class FakeProvider implements PullRequestProvider {
   readonly kind = "github";

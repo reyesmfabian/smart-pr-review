@@ -1,6 +1,7 @@
 package com.fabianreyes.smartprreview.ai
 
 import com.fabianreyes.smartprreview.SmartPrReviewBundle.message
+import com.fabianreyes.smartprreview.auth.PasswordSafeSecrets
 import com.fabianreyes.smartprreview.review.OpenPullRequest
 import com.fabianreyes.smartprreview.review.ReviewSession
 import com.fabianreyes.smartprreview.settings.SmartPrReviewProjectSettings
@@ -24,7 +25,7 @@ import com.intellij.openapi.ui.Messages
 
 private val LOG = logger<AiReviewAction>()
 
-/** How long a CLI may take to list its models before the picker goes on without them. */
+/** How long an engine may take to list its models before the picker goes on without them. */
 private const val LIST_MODELS_TIMEOUT_MS = 20_000L
 
 /** "Review with AI": pick profiles, pick an engine, review in the background, then report. One review at a time per project. */
@@ -84,6 +85,7 @@ class AiReviewAction : DumbAwareAction(message("ai.reviewWithAi"), null, AllIcon
                         stage(project) {
                             val engine = choice.toEngine()
                             when {
+                                choice.settings.url != null -> chooseModel(project, session, c, selected, choice)
                                 engine == null -> {
                                     finish(project)
                                     reportMissing(project, choice)
@@ -104,29 +106,40 @@ class AiReviewAction : DumbAwareAction(message("ai.reviewWithAi"), null, AllIcon
         }.queue()
     }
 
-    /** Asks for the model of an engine that declares its model flag, after loading the models the CLI lists (when it can). */
+    /**
+     * Asks for the model of an engine that declares its model flag, or of a URL engine, after loading the models the
+     * CLI or the server lists (when it can).
+     */
     private fun chooseModel(project: Project, session: ReviewSession, c: OpenPullRequest, profiles: List<Profile>, choice: EngineChoice) {
-        val executable = choice.executable?.toString() ?: return finish(project)
+        val settings = choice.settings
+        val url = settings.url
+        var apiKey: String? = null
+        fun engine(model: String?): ReviewEngine =
+            if (url != null) UrlEngine(choice.id, model ?: error("a URL engine needs a model"), url, settings.contextWindow, settings.maxOutputTokens, apiKey)
+            else choice.toEngine(model) ?: error("engine without executable")
         fun show(listed: List<CliModel>) = stage(project) {
             pickModel(
                 project, choice, listed,
-                onPicked = { model ->
-                    stage(project) { review(project, session, c, profiles, choice.toEngine(model) ?: error("engine without executable")) }
-                },
+                onPicked = { model -> stage(project) { review(project, session, c, profiles, engine(model)) } },
                 onDismissed = { finish(project) },
             )
         }
-        if (choice.settings.listModelsArgs.isEmpty()) return show(emptyList())
+        if (url == null && settings.listModelsArgs.isEmpty()) return show(emptyList())
         object : Task.Backgroundable(project, message("ai.loadingModels", choice.id), true) {
             private var listed = emptyList<CliModel>()
 
             override fun run(indicator: ProgressIndicator) {
                 listed = try {
-                    listCliModels(executable, choice.settings.listModelsArgs, indicator, LIST_MODELS_TIMEOUT_MS)
+                    if (url != null) {
+                        apiKey = PasswordSafeSecrets.get(apiKeySecret(url))
+                        listUrlModels(url, apiKey, LIST_MODELS_TIMEOUT_MS)
+                    } else {
+                        listCliModels(checkNotNull(choice.executable).toString(), settings.listModelsArgs, indicator, LIST_MODELS_TIMEOUT_MS)
+                    }
                 } catch (_: EngineCancelled) {
                     emptyList() // onCancel releases the guard.
                 } catch (e: Exception) {
-                    // Not signed in, offline, an older CLI: the picker still offers the default, the engine's models and "Other…".
+                    // Not signed in, offline, an older CLI, a server down: the picker still offers the engine's models and "Other…".
                     LOG.warn("Could not list the models of ${choice.id}: ${e.message}")
                     emptyList()
                 }
@@ -141,7 +154,7 @@ class AiReviewAction : DumbAwareAction(message("ai.reviewWithAi"), null, AllIcon
         }.queue()
     }
 
-    private fun review(project: Project, session: ReviewSession, c: OpenPullRequest, profiles: List<Profile>, engine: Engine) {
+    private fun review(project: Project, session: ReviewSession, c: OpenPullRequest, profiles: List<Profile>, engine: ReviewEngine) {
         // The pull request the profiles were loaded for must still be the open one (the dialogs took a while).
         if (session.current !== c) {
             finish(project)

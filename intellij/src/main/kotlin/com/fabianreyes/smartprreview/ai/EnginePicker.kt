@@ -14,7 +14,7 @@ import com.intellij.ui.SimpleListCellRenderer
 import java.nio.file.Path
 import com.fabianreyes.smartprreview.settings.Engine as EngineSettings
 
-/** An engine of the settings, with the executable [findExecutable] found for it (null when missing). */
+/** An engine of the settings, with the executable [findExecutable] found for it (null when missing, and for a URL engine). */
 data class EngineChoice(val id: String, val settings: EngineSettings, val executable: Path?) {
     /** The engine to run, with [model] (when one was picked) appended to its arguments after the engine's model flag. */
     fun toEngine(model: String? = null): Engine? = executable?.let {
@@ -25,7 +25,8 @@ data class EngineChoice(val id: String, val settings: EngineSettings, val execut
 
 /** Every configured engine with its executable, the default one first. Blocking (searches PATH): never call on the EDT. */
 fun engineChoices(settings: SmartPrReviewSettings): List<EngineChoice> =
-    settings.engines.map { (id, e) -> EngineChoice(id, e, findExecutable(e.command)) }
+    // A server is not probed: one on the network could keep the picker waiting.
+    settings.engines.map { (id, e) -> EngineChoice(id, e, if (e.url != null) null else findExecutable(e.command)) }
         .sortedBy { it.id != settings.defaultEngine }
 
 /** Shows the popup of [choices] (the default one marked) and calls [onPicked] with the choice, or [onDismissed] when none was made. EDT. */
@@ -37,8 +38,8 @@ fun pickEngine(project: Project, choices: List<EngineChoice>, defaultId: String,
             override fun customize(list: javax.swing.JList<out EngineChoice>, c: EngineChoice?, index: Int, selected: Boolean, hasFocus: Boolean) {
                 c ?: return
                 val star = if (c.id == defaultId) "★ " else ""
-                val missing = if (c.executable == null) " · ${message("ai.notAvailable")}" else ""
-                text = "$star${c.id} — ${c.settings.command}$missing"
+                val missing = if (c.settings.url == null && c.executable == null) " · ${message("ai.notAvailable")}" else ""
+                text = "$star${c.id} — ${c.settings.url ?: c.settings.command}$missing"
             }
         })
         .setItemChosenCallback { picked = true; onPicked(it) }
@@ -77,14 +78,17 @@ fun cliModelChoices(settings: EngineSettings, listed: List<CliModel>, last: Stri
 private data class ModelRow(val model: CliModel?, val other: Boolean = false)
 
 /**
- * Asks for the model of [choice], an engine that declares its model flag, offering [listed] (what the CLI printed)
- * next to the engine's own models. Calls [onPicked] with the model, or null for the CLI's own default, and
- * [onDismissed] when none was chosen. The choice is remembered and offered first next time. EDT.
+ * Asks for the model of [choice], an engine that declares its model flag or a URL engine, offering [listed] (what the
+ * CLI printed or the server listed) next to the engine's own models. Calls [onPicked] with the model, or null for the
+ * CLI's own default (a URL engine has none: it needs a model), and [onDismissed] when none was chosen. The choice is
+ * remembered and offered first next time. EDT.
  */
 fun pickModel(project: Project, choice: EngineChoice, listed: List<CliModel>, onPicked: (String?) -> Unit, onDismissed: () -> Unit) {
     val properties = PropertiesComponent.getInstance()
     val key = lastModelKey(choice.id)
-    val rows = cliModelChoices(choice.settings, listed, properties.getValue(key)).map { ModelRow(it) } + ModelRow(null, other = true)
+    val url = choice.settings.url
+    val rows = cliModelChoices(choice.settings, listed, properties.getValue(key)).filter { it != null || url == null }.map { ModelRow(it) } +
+        ModelRow(null, other = true)
 
     fun label(row: ModelRow): String = when {
         row.other -> message("ai.otherModel")
@@ -113,7 +117,7 @@ fun pickModel(project: Project, choice: EngineChoice, listed: List<CliModel>, on
             if (!row.other) return@setItemChosenCallback accept(row.model?.id)
             val typed = Messages.showInputDialog(
                 project,
-                message("ai.modelName", choice.settings.command, choice.settings.modelArg.orEmpty()),
+                if (url != null) message("ai.urlModelName", url) else message("ai.modelName", choice.settings.command, choice.settings.modelArg.orEmpty()),
                 message("ai.reviewWithAi"),
                 null,
                 "",

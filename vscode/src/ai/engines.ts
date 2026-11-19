@@ -4,6 +4,7 @@ import { access, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, extname, isAbsolute, join } from "node:path";
 import * as vscode from "vscode";
+import { HttpError, requestJson } from "../http";
 
 /** A command-line engine from the setting smartPrReview.engines. The prompt goes through stdin; the answer is stdout. */
 export interface CliEngineConfig {
@@ -277,4 +278,149 @@ export async function promptsWithinLimit(
   const first = await promptsWithinLimit(model, files.slice(0, half), makePrompt, token);
   const second = await promptsWithinLimit(model, files.slice(half), makePrompt, token);
   return { prompts: [...first.prompts, ...second.prompts], skipped: [...first.skipped, ...second.skipped] };
+}
+
+/**
+ * An engine reached over HTTP with the OpenAI chat completions API: Ollama, LM Studio, vLLM, llama.cpp,
+ * LiteLLM, OpenRouter… Like Copilot it cannot read the repository, so it gets the files in the prompt.
+ */
+export interface UrlEngineConfig {
+  /** Base of the API, the part before /chat/completions (usually ending in /v1). */
+  url: string;
+  models?: string[];
+  defaultModel?: string;
+  /** Tokens the server takes per request, prompt and answer together: the context length it was started with. */
+  contextWindow: number;
+  /** Tokens kept for the answer, reasoning included; sent as max_tokens. */
+  maxOutputTokens: number;
+}
+
+export const DEFAULT_CONTEXT_WINDOW = 8192;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 4096;
+
+/**
+ * Characters per token when the server cannot count them. Low on purpose: code averages 3 to 4, and a
+ * prompt counted short may be cut by the server without notice (Ollama does).
+ */
+const CHARS_PER_TOKEN = 3;
+
+/** The engine's URL without trailing slashes; its API key is stored under it, so it never reaches another server. */
+export function apiBase(engine: Pick<UrlEngineConfig, "url">): string {
+  return engine.url.replace(/\/+$/, "");
+}
+
+const authorization = (apiKey: string | undefined): Record<string, string> => (apiKey ? { authorization: `Bearer ${apiKey}` } : {});
+
+/** An AbortSignal that follows `token`, and fires after `timeoutMs` when given. */
+function abortOn(token: vscode.CancellationToken | undefined, timeoutMs?: number): { signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const cancellation = token?.onCancellationRequested(() => controller.abort());
+  if (token?.isCancellationRequested) {
+    controller.abort();
+  }
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      cancellation?.dispose();
+      clearTimeout(timer);
+    },
+  };
+}
+
+/** A failed request, with the server named and what to do about a rejected key. */
+function apiError(engine: UrlEngineConfig, error: unknown): Error {
+  if (error instanceof HttpError) {
+    return new Error(
+      error.status === 401 || error.status === 403
+        ? vscode.l10n.t('{0} rejected the API key (HTTP {1}). Set it with "Set API Key of an AI Engine".', engine.url, error.status)
+        : vscode.l10n.t("{0} answered HTTP {1}: {2}", engine.url, error.status, error.message),
+    );
+  }
+  // fetch reports a refused connection or an unknown host as a TypeError whose cause says which.
+  if (error instanceof TypeError) {
+    const cause = (error as { cause?: { message?: unknown } }).cause?.message;
+    return new Error(vscode.l10n.t("Could not reach {0}: {1}", engine.url, typeof cause === "string" ? cause : error.message));
+  }
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/** The models the server lists at GET {url}/models. */
+export async function listUrlModels(
+  engine: UrlEngineConfig,
+  apiKey: string | undefined,
+  token: vscode.CancellationToken,
+  timeoutMs: number,
+): Promise<CliModel[]> {
+  const abort = abortOn(token, timeoutMs);
+  try {
+    const body = await requestJson<{ data?: unknown }>(`${apiBase(engine)}/models`, { headers: authorization(apiKey), signal: abort.signal });
+    return (Array.isArray(body?.data) ? body.data : []).flatMap((model: unknown) => {
+      const id = (model as { id?: unknown } | null)?.id;
+      return typeof id === "string" && isModelName(id) ? [{ id }] : [];
+    });
+  } catch (error) {
+    throw apiError(engine, error);
+  } finally {
+    abort.dispose();
+  }
+}
+
+interface ChatCompletion {
+  choices?: { message?: { content?: unknown }; finish_reason?: unknown }[];
+}
+
+/**
+ * A model of a URL engine as a ChatModel, so it goes through the path Copilot takes: the new version of each
+ * file in the prompt, split to fit `contextWindow` minus what is kept for the answer.
+ */
+export function urlChatModel(engine: UrlEngineConfig, model: string, apiKey: string | undefined): ChatModel {
+  return {
+    id: model,
+    name: model,
+    maxInputTokens: engine.contextWindow - engine.maxOutputTokens,
+    countTokens: async (text) => Math.ceil(text.length / CHARS_PER_TOKEN),
+    sendRequest: async (messages, _options, token) => {
+      const prompt = messages
+        .flatMap((message) => message.content)
+        .map((part) => (part instanceof vscode.LanguageModelTextPart ? part.value : ""))
+        .join("");
+      const abort = abortOn(token);
+      let body: ChatCompletion | undefined;
+      try {
+        body = await requestJson<ChatCompletion>(`${apiBase(engine)}/chat/completions`, {
+          method: "POST",
+          headers: { ...authorization(apiKey), "content-type": "application/json" },
+          body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], max_tokens: engine.maxOutputTokens, stream: false }),
+          signal: abort.signal,
+        });
+      } catch (error) {
+        throw apiError(engine, error);
+      } finally {
+        abort.dispose();
+      }
+      const choice = body?.choices?.[0];
+      // Reasoning models spend max_tokens thinking too: a cut answer has no JSON, say why instead.
+      if (choice?.finish_reason === "length") {
+        throw new Error(
+          vscode.l10n.t(
+            "The model used up maxOutputTokens ({0}) before finishing its answer. Raise maxOutputTokens of the engine, or lower the model's reasoning.",
+            engine.maxOutputTokens,
+          ),
+        );
+      }
+      const content = choice?.message?.content;
+      // Something that is not a chat completions API, such as a URL missing its /v1.
+      if (typeof content !== "string") {
+        throw new Error(vscode.l10n.t("{0} did not answer like an OpenAI-compatible API. Check the url of the engine.", engine.url));
+      }
+      // Servers that do not split the reasoning out leave it in the answer, where its braces would confuse the parser.
+      const answer = content.replace(/<think>[\s\S]*?<\/think>/g, "");
+      return {
+        text: (async function* () {
+          yield answer;
+        })(),
+      };
+    },
+  };
 }
