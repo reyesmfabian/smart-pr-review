@@ -14,6 +14,7 @@ eslint.config.mjs
 images/*.svg
 # Dependency code the extension never loads: VS Code requires its CommonJS build on Node.
 node_modules/*/dist/esm/**
+node_modules/@*/*/dist/esm/**
 node_modules/yaml/browser/**
 node_modules/yaml/bin.mjs
 node_modules/yaml/util.js

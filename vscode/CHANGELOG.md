@@ -11,6 +11,7 @@
 - Codex reviews run with medium reasoning effort instead of inheriting the effort of your Codex configuration.
 - Cursor no longer has `--model auto` fixed in its arguments: *auto* is the first model offered instead.
 - If you redefine `claude`, `codex` or `cursor` in your engine settings, your definition is used as is: no model picker and no fixed reasoning effort unless you add them.
+- Update `minimatch` to 11 and the development tools to resolve npm audit advisories. Profile globs match as before.
 
 ### Fixed
 - Stop the engines of an AI review when another pull request is opened, the open one is refreshed or VS Code closes; they used to keep running to an answer that was then discarded.
